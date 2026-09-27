@@ -1,0 +1,46 @@
+/* Exprest Design Tokens (Design.md §3, §4, §5, §6) */
+:root {
+  /* Application Color Tokens */
+  --ex-bg: #ffffff;
+  --ex-surface: #f7f7f8;
+  --ex-surface-elevated: #ffffff;
+  --ex-border: #e7e7ea;
+  --ex-text: #111113;
+  --ex-text-secondary: #6b6b72;
+  --ex-text-tertiary: #9a9aa1;
+  --ex-accent: #111113;
+  --ex-success: #197a4b;
+  --ex-warning: #a15c00;
+  --ex-danger: #c33b3b;
+  --ex-info: #3568c6;
+
+  /* Typography Font Stack */
+  --ex-font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Spacing Scale (4px base) */
+  --ex-space-1: 4px;
+  --ex-space-2: 8px;
+  --ex-space-3: 12px;
+  --ex-space-4: 16px;
+  --ex-space-5: 20px;
+  --ex-space-6: 24px;
+  --ex-space-8: 32px;
+  --ex-space-10: 40px;
+  --ex-space-12: 48px;
+  --ex-space-16: 64px;
+
+  /* Radii */
+  --ex-radius-control: 11px;
+  --ex-radius-card: 18px;
+  --ex-radius-hero: 22px;
+  --ex-radius-pill: 9999px;
+
+  /* Elevation Shadows */
+  --ex-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --ex-shadow-md: 0 8px 30px rgba(0, 0, 0, 0.08);
+
+  /* Transitions */
+  --ex-transition-micro: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --ex-transition-state: 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  --ex-transition-page: 260ms cubic-bezier(0.4, 0, 0.2, 1);
+}

@@ -1,0 +1,13 @@
+@import '@exprest/ui/src/tokens.css';
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: var(--ex-bg);
+  color: var(--ex-text);
+  font-family: var(--ex-font-sans);
+  -webkit-font-smoothing: antialiased;
+}

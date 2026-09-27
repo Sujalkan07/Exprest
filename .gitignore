@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js build output
+.next/
+out/
+
+# Build outputs & dist
+dist/
+build/
+
+# Turbo
+.turbo/
+
+# Environment files
+.env
+*.env
+.env.*
+!.env.example
+
+# IDE / OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs & Temporary Scratch Files
+*.log
+analytics_body.txt
+analytics_jsx.txt
+companion_jsx.txt
+main_jsx.txt
+overview_jsx.txt
+map_html.txt
+stitch_*.html
+stitch_*.txt
+live.json
+live26.json
+temp.json
+api_response.json

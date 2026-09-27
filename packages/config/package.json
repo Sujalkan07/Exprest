@@ -1,0 +1,17 @@
+{
+  "name": "@exprest/config",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --declaration --outDir dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.1.0",
+    "typescript": "^5.5.0"
+  }
+}

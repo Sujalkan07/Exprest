@@ -1,0 +1,16 @@
+{
+  "name": "exprest-monorepo",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter @exprest/api --filter @exprest/web dev",
+    "dev:turbo": "turbo run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.5.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

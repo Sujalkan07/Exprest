@@ -1,0 +1,586 @@
+﻿<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Exprest â€” Real-time train intelligence</title>
+<!-- Material Symbols Outlined font -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Inter Font Family -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600;620;650;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS via CDN -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration strictly mapped to Tokens -->
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "surface-dim": "#ddd9d9",
+            "on-primary-container": "#858386",
+            "surface-container": "#f1edec",
+            "tertiary-container": "#1f1b19",
+            "primary": "#000000",
+            "outline-variant": "#c8c6ca",
+            "on-error": "#ffffff",
+            "surface": "#f7f7f8",
+            "on-secondary-container": "#64646b",
+            "on-primary": "#ffffff",
+            "success": "#197a4b",
+            "tertiary-fixed": "#eae0de",
+            "outline": "#77767b",
+            "on-tertiary": "#ffffff",
+            "info": "#3568c6",
+            "background": "#fdf8f8",
+            "text-tertiary": "#9a9aa1",
+            "border": "#e7e7ea",
+            "on-error-container": "#93000a",
+            "inverse-on-surface": "#f4f0ef",
+            "surface-variant": "#e5e2e1",
+            "error": "#ba1a1a",
+            "warning": "#a15c00",
+            "on-surface": "#1c1b1b",
+            "on-surface-variant": "#47464a",
+            "primary-fixed": "#e5e1e4",
+            "on-secondary-fixed-variant": "#46464d",
+            "surface-container-lowest": "#ffffff",
+            "inverse-primary": "#c8c6c8",
+            "danger": "#c33b3b",
+            "primary-fixed-dim": "#c8c6c8",
+            "error-container": "#ffdad6",
+            "on-tertiary-fixed-variant": "#4b4544",
+            "surface-container-highest": "#e5e2e1",
+            "tertiary": "#000000",
+            "inverse-surface": "#313030",
+            "surface-container-low": "#f7f3f2",
+            "surface-tint": "#5f5e60",
+            "on-tertiary-fixed": "#1f1b19",
+            "on-tertiary-container": "#8a8280",
+            "surface-elevated": "#ffffff",
+            "on-secondary": "#ffffff",
+            "secondary-fixed": "#e3e1ea",
+            "on-secondary-fixed": "#1a1b21",
+            "surface-container-high": "#ebe7e7",
+            "primary-container": "#1b1b1d",
+            "secondary-fixed-dim": "#c7c5cd",
+            "secondary": "#5e5e65",
+            "on-primary-fixed": "#1b1b1d",
+            "secondary-container": "#e3e1ea",
+            "on-primary-fixed-variant": "#474649",
+            "on-background": "#1c1b1b",
+            "tertiary-fixed-dim": "#cec4c2",
+            "surface-bright": "#fdf8f8"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.125rem",
+            "lg": "0.25rem",
+            "xl": "0.5rem",
+            "full": "0.75rem"
+          },
+          "spacing": {
+            "space-xl": "32px",
+            "space-2xl": "48px",
+            "space-md": "16px",
+            "gutter": "16px",
+            "space-xs": "4px",
+            "space-sm": "8px",
+            "space-lg": "24px",
+            "margin": "24px"
+          },
+          "fontFamily": {
+            "display-xl": ["Inter"],
+            "display-lg": ["Inter"],
+            "body-lg": ["Inter"],
+            "label": ["Inter"],
+            "heading-lg": ["Inter"],
+            "body-md": ["Inter"],
+            "heading-md": ["Inter"],
+            "body-sm": ["Inter"]
+          },
+          "fontSize": {
+            "display-xl": ["44px", { "lineHeight": "52px", "fontWeight": "650" }],
+            "display-lg": ["36px", { "lineHeight": "44px", "fontWeight": "650" }],
+            "body-lg": ["17px", { "lineHeight": "24px", "fontWeight": "450" }],
+            "label": ["11px", { "lineHeight": "16px", "fontWeight": "600" }],
+            "heading-lg": ["26px", { "lineHeight": "32px", "fontWeight": "620" }],
+            "body-md": ["15px", { "lineHeight": "22px", "fontWeight": "450" }],
+            "heading-md": ["19px", { "lineHeight": "24px", "fontWeight": "600" }],
+            "body-sm": ["13px", { "lineHeight": "18px", "fontWeight": "450" }]
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      display: inline-block;
+      vertical-align: middle;
+      line-height: 1;
+    }
+    /* Subtle custom card elevation per style guidance */
+    .card-lift {
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02), 0 6px 18px rgba(0,0,0,0.03);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .card-lift:hover {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04), 0 12px 28px rgba(0,0,0,0.06);
+      transform: translateY(-2px);
+    }
+    .search-elevation {
+      box-shadow: 0 2px 14px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+    }
+  </style>
+</head>
+<body class="bg-surface font-body-md text-on-surface antialiased min-h-screen flex flex-col justify-between selection:bg-surface-variant selection:text-primary">
+<!-- ==================== TOP NAVIGATION BAR (Exact mapping from JSON) ==================== -->
+<header class="w-full bg-surface-container-lowest dark:bg-surface-container-lowest border-b border-border sticky top-0 z-50">
+<div class="flex justify-between items-center w-full px-space-lg max-w-7xl mx-auto h-14">
+<!-- Brand Logo / Wordmark -->
+<div class="flex items-center gap-space-md">
+<a class="font-heading-md text-heading-md font-bold text-on-surface dark:text-on-surface tracking-tight flex items-center gap-2 transition-all duration-150 ease-out active:scale-95" href="#">
+<div class="w-6 h-6 rounded-lg bg-primary text-on-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 1;">train</span>
+</div>
+<span>Exprest</span>
+<span class="inline-block w-1.5 h-1.5 rounded-full bg-success"></span>
+</a>
+</div>
+<!-- Navigation Links -->
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-on-surface-variant dark:text-on-surface-variant font-body-sm text-body-sm hover:text-primary hover:bg-surface dark:hover:bg-surface transition-colors duration-150 py-1 px-2 rounded flex items-center gap-1.5" href="#saved">
+<span>Saved Trains</span>
+<span class="inline-flex items-center justify-center px-1.5 py-0.2 rounded-full text-label font-label bg-surface-container text-on-surface-variant">3</span>
+</a>
+<!-- Active Navigation item for Home & Search Screen -->
+<a class="text-primary dark:text-primary font-heading-md text-body-sm border-b-2 border-primary pb-1 flex items-center gap-1.5" href="#radar">
+<span>Live Radar</span>
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
+</span>
+</a>
+<a class="text-on-surface-variant dark:text-on-surface-variant font-body-sm text-body-sm hover:text-primary hover:bg-surface dark:hover:bg-surface transition-colors duration-150 py-1 px-2 rounded flex items-center gap-1.5" href="#status">
+<span>Status</span>
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+</a>
+<a class="text-on-surface-variant dark:text-on-surface-variant font-body-sm text-body-sm hover:text-primary hover:bg-surface dark:hover:bg-surface transition-colors duration-150 py-1 px-2 rounded" href="#settings">
+          Settings
+        </a>
+</nav>
+<!-- Trailing Primary Action & Icon Actions -->
+<div class="flex items-center gap-3">
+<!-- Live Feed Pill Button -->
+<button class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container hover:bg-surface-variant text-on-surface font-label text-label transition-all duration-150 ease-out active:scale-95">
+<span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
+<span>Live Feed</span>
+</button>
+<!-- Command Shortcut Badge -->
+<div class="hidden lg:flex items-center gap-1 px-2 py-1 rounded bg-surface border border-border text-on-secondary-container text-label font-label">
+<span>âŒ˜</span>
+<span>K</span>
+</div>
+<!-- Trailing action icons -->
+<button aria-label="Notifications" class="p-1.5 text-on-surface-variant hover:text-primary hover:bg-surface rounded-lg transition-colors duration-150" data-icon="notifications">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+</button>
+<button aria-label="Filter Tuning" class="p-1.5 text-on-surface-variant hover:text-primary hover:bg-surface rounded-lg transition-colors duration-150" data-icon="tune">
+<span class="material-symbols-outlined text-[20px]">tune</span>
+</button>
+<!-- Profile Avatar Placeholder -->
+<div class="w-8 h-8 rounded-full border border-border overflow-hidden bg-surface-container flex items-center justify-center">
+<img class="w-full h-full object-cover" data-alt="A professional, minimalist user profile portrait of a modern technology operator with neutral lighting, clean white background, high contrast, matching the monochrome precision aesthetic of the railway system." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAR6tQMXYWNuqQPmQX7ImKilk9_wLaO_vhgrLoCpmwb7DQ3B-4DX_0jtXO7-R6t8-9BVi9wTOmepQ3ZZK8OkJOCe1dJbWB-4urqE2OhHY2f3Z6p2BBG97WKFRFS21A8QWJGOjEuWMiSd6FC3LdtBcosDouZINA5bZRWrGCaAxrTGZaJzQTQMiNdGjsZn0mn74oGUHgkwQhzCb8mrons7n8LnVHAoLGk78krTrBt0vrzZo7jF9zlp9u-j4Xq1q9xWRnTmShARX5l9G9x"/>
+</div>
+</div>
+</div>
+</header>
+<!-- ==================== MAIN CONTENT CANVAS ==================== -->
+<main class="flex-1 w-full max-w-7xl mx-auto px-space-lg py-space-xl flex flex-col justify-start">
+<!-- HERO SECTION & COMMAND-STYLE SEARCH -->
+<section class="w-full flex flex-col items-center text-center mt-2 mb-space-2xl">
+<!-- Live Network Freshness Badge -->
+<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container-lowest border border-border text-label font-label text-on-surface-variant shadow-sm mb-6">
+<span class="inline-block w-2 h-2 rounded-full bg-success"></span>
+<span class="font-medium text-on-surface">Indian Railways Live Network</span>
+<span class="text-text-tertiary">|</span>
+<span>Freshness: 99.4%</span>
+<span class="text-text-tertiary">Â·</span>
+<span class="text-on-surface-variant">12,480+ trains active</span>
+</div>
+<!-- Main Headline -->
+<h1 class="font-display-lg text-display-lg text-on-surface tracking-tight max-w-2xl mb-3">
+        Real-time train intelligence, simplified.
+      </h1>
+<!-- Secondary Subtitle -->
+<p class="font-body-md text-body-md text-secondary max-w-xl mb-8">
+        Track exact positions, delays, platform numbers, and live route speed with zero noise.
+      </p>
+<!-- Command Search Container -->
+<div class="w-full max-w-[720px] relative">
+<div class="w-full h-14 bg-surface-container-lowest border border-border rounded-xl search-elevation px-4 flex items-center gap-3 transition-all focus-within:ring-2 focus-within:ring-primary focus-within:border-transparent">
+<!-- Search Icon -->
+<span class="material-symbols-outlined text-text-tertiary text-[22px]" data-icon="search">search</span>
+<!-- Real Search Input Field -->
+<input autofocus="" class="flex-1 bg-transparent border-none p-0 text-on-surface placeholder:text-text-tertiary text-body-md font-body-md focus:ring-0 focus:outline-none" placeholder="Search train by number or name (e.g. 12345 or Rajdhani Express)" type="text"/>
+<!-- Trailing Elements inside Input Box -->
+<div class="flex items-center gap-2">
+<!-- Shortcut Badge -->
+<div class="hidden sm:inline-flex items-center px-2 py-0.5 rounded bg-surface border border-border text-label font-label text-text-tertiary">
+              âŒ˜K
+            </div>
+<!-- Track Live Primary Action Button -->
+<button class="h-10 px-4 rounded-lg bg-primary hover:bg-primary-container text-on-primary font-body-sm text-body-sm flex items-center gap-1.5 transition-all duration-150 ease-out active:scale-95 shadow-sm">
+<span>Track Live</span>
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Optional live telemetry hint beneath search -->
+<div class="flex items-center justify-between text-label font-label text-text-tertiary mt-2 px-1">
+<span class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">gps_fixed</span>
+            Live GPS telemetry updated every 500ms
+          </span>
+<span class="hover:text-on-surface cursor-pointer transition-colors">Press Enter â†µ to lock route</span>
+</div>
+</div>
+</section>
+<!-- ==================== RECENT SEARCHES SECTION ==================== -->
+<section class="w-full max-w-5xl mx-auto mb-space-2xl">
+<div class="flex items-center justify-between mb-3 px-1">
+<span class="text-label font-label text-text-tertiary uppercase tracking-wider">
+          Recent Searches
+        </span>
+<button class="text-label font-label text-text-tertiary hover:text-danger transition-colors duration-150 flex items-center gap-1">
+<span>Clear history</span>
+</button>
+</div>
+<!-- Flowing horizontal pills list -->
+<div class="flex flex-wrap items-center gap-2.5">
+<!-- Pill 1 -->
+<div class="group inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-surface-container-lowest border border-border hover:border-outline-variant transition-all duration-150 cursor-pointer shadow-sm">
+<span class="text-body-sm font-body-sm text-on-surface font-medium">12951</span>
+<span class="text-secondary text-body-sm font-body-sm">Mumbai Tejas Rajdhani</span>
+<span class="inline-flex items-center px-2 py-0.5 rounded-full text-label font-label bg-success/10 text-success">
+            On Time
+          </span>
+<button class="text-text-tertiary hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity ml-1" title="Remove">âœ•</button>
+</div>
+<!-- Pill 2 -->
+<div class="group inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-surface-container-lowest border border-border hover:border-outline-variant transition-all duration-150 cursor-pointer shadow-sm">
+<span class="text-body-sm font-body-sm text-on-surface font-medium">22436</span>
+<span class="text-secondary text-body-sm font-body-sm">Vande Bharat Express</span>
+<span class="inline-flex items-center px-2 py-0.5 rounded-full text-label font-label bg-surface-container text-on-surface-variant font-medium">
+            +4 min
+          </span>
+<button class="text-text-tertiary hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity ml-1" title="Remove">âœ•</button>
+</div>
+<!-- Pill 3 -->
+<div class="group inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-surface-container-lowest border border-border hover:border-outline-variant transition-all duration-150 cursor-pointer shadow-sm">
+<span class="text-body-sm font-body-sm text-on-surface font-medium">12301</span>
+<span class="text-secondary text-body-sm font-body-sm">Howrah Rajdhani</span>
+<span class="inline-flex items-center px-2 py-0.5 rounded-full text-label font-label bg-success/10 text-success">
+            On Time
+          </span>
+<button class="text-text-tertiary hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity ml-1" title="Remove">âœ•</button>
+</div>
+<!-- Pill 4 -->
+<div class="group inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-surface-container-lowest border border-border hover:border-outline-variant transition-all duration-150 cursor-pointer shadow-sm">
+<span class="text-body-sm font-body-sm text-on-surface font-medium">12626</span>
+<span class="text-secondary text-body-sm font-body-sm">Kerala Express</span>
+<span class="inline-flex items-center px-2 py-0.5 rounded-full text-label font-label bg-warning/10 text-warning font-medium">
+            +18 min
+          </span>
+<button class="text-text-tertiary hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity ml-1" title="Remove">âœ•</button>
+</div>
+<!-- Pill 5 -->
+<div class="group inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-surface-container-lowest border border-border hover:border-outline-variant transition-all duration-150 cursor-pointer shadow-sm">
+<span class="text-body-sm font-body-sm text-on-surface font-medium">12002</span>
+<span class="text-secondary text-body-sm font-body-sm">Bhopal Shatabdi</span>
+<span class="inline-flex items-center px-2 py-0.5 rounded-full text-label font-label bg-surface-container text-on-surface-variant font-medium">
+            Departed
+          </span>
+<button class="text-text-tertiary hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity ml-1" title="Remove">âœ•</button>
+</div>
+</div>
+</section>
+<!-- ==================== FAVORITE TRAINS QUICK LAUNCH GRID ==================== -->
+<section class="w-full max-w-5xl mx-auto mb-space-2xl">
+<div class="flex items-center justify-between mb-4 px-1">
+<div class="flex items-center gap-2">
+<h2 class="font-heading-md text-heading-md text-on-surface font-semibold tracking-tight">Favorite Trains</h2>
+<span class="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-label font-label bg-surface-container text-on-surface-variant">3 pinned</span>
+</div>
+<button class="text-body-sm font-body-sm font-medium text-primary hover:text-secondary transition-colors duration-150 flex items-center gap-1">
+<span>Manage</span>
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+</button>
+</div>
+<!-- 3-Column Bento Grid of Quick Cards -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+<!-- CARD 1: Mumbai Rajdhani -->
+<div class="bg-surface-container-lowest border border-border rounded-xl p-5 card-lift flex flex-col justify-between relative group cursor-pointer">
+<div>
+<!-- Header Row: Number & Status Badge -->
+<div class="flex items-start justify-between mb-3">
+<div>
+<span class="text-label font-label text-text-tertiary tracking-wider">SUPERFAST EXPRESS</span>
+<div class="flex items-center gap-2 mt-0.5">
+<h3 class="font-heading-md text-heading-md font-bold text-on-surface tracking-tight">12951 / 12952</h3>
+</div>
+</div>
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-label font-label bg-success/10 text-success font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+                On Time
+              </span>
+</div>
+<!-- Route Nodes -->
+<div class="mb-4">
+<div class="flex items-center justify-between text-body-md font-body-md text-on-surface font-medium">
+<span>NDLS</span>
+<span class="material-symbols-outlined text-text-tertiary text-[18px]">east</span>
+<span>MMCT</span>
+</div>
+<p class="text-body-sm font-body-sm text-secondary truncate">Mumbai Tejas Rajdhani</p>
+</div>
+<!-- Telemetry Indicator Line -->
+<div class="w-full bg-surface-container rounded-full h-1.5 mb-4 overflow-hidden flex">
+<div class="bg-success h-full rounded-full" style="width: 72%;"></div>
+</div>
+<!-- Operational Sub-card Metrics -->
+<div class="space-y-2 py-3 border-t border-b border-border">
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">speed</span>
+                  Live Speed
+                </span>
+<span class="font-medium text-on-surface">128 km/h</span>
+</div>
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">location_on</span>
+                  Current Sector
+                </span>
+<span class="font-medium text-on-surface truncate max-w-[130px]">Near Vadodara Jn</span>
+</div>
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">departure_board</span>
+                  Platform
+                </span>
+<span class="font-medium text-on-surface">Platform 3 confirmed</span>
+</div>
+</div>
+</div>
+<!-- Bottom Footer Row -->
+<div class="mt-4 flex items-center justify-between">
+<div>
+<span class="text-label font-label text-text-tertiary block">SCHEDULED ARRIVAL</span>
+<span class="text-body-md font-body-md font-bold text-on-surface">08:32 AM</span>
+</div>
+<button class="px-3 py-1.5 rounded-lg bg-surface border border-border text-on-surface hover:bg-primary hover:text-on-primary font-body-sm text-body-sm transition-all duration-150">
+              Open Radar
+            </button>
+</div>
+</div>
+<!-- CARD 2: Vande Bharat Express -->
+<div class="bg-surface-container-lowest border border-border rounded-xl p-5 card-lift flex flex-col justify-between relative group cursor-pointer">
+<div>
+<!-- Header Row -->
+<div class="flex items-start justify-between mb-3">
+<div>
+<span class="text-label font-label text-text-tertiary tracking-wider">SEMI-HIGH SPEED</span>
+<div class="flex items-center gap-2 mt-0.5">
+<h3 class="font-heading-md text-heading-md font-bold text-on-surface tracking-tight">22436</h3>
+</div>
+</div>
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-label font-label bg-surface-container text-on-surface-variant font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                +3 min
+              </span>
+</div>
+<!-- Route Nodes -->
+<div class="mb-4">
+<div class="flex items-center justify-between text-body-md font-body-md text-on-surface font-medium">
+<span>NDLS</span>
+<span class="material-symbols-outlined text-text-tertiary text-[18px]">east</span>
+<span>BSB</span>
+</div>
+<p class="text-body-sm font-body-sm text-secondary truncate">Vande Bharat Express</p>
+</div>
+<!-- Telemetry Indicator Line -->
+<div class="w-full bg-surface-container rounded-full h-1.5 mb-4 overflow-hidden flex">
+<div class="bg-primary h-full rounded-full" style="width: 48%;"></div>
+</div>
+<!-- Operational Sub-card Metrics -->
+<div class="space-y-2 py-3 border-t border-b border-border">
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">navigation</span>
+                  Next Halt
+                </span>
+<span class="font-medium text-on-surface">Kanpur in 12 km</span>
+</div>
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">location_on</span>
+                  Current Sector
+                </span>
+<span class="font-medium text-on-surface truncate max-w-[130px]">Approaching Kanpur</span>
+</div>
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">departure_board</span>
+                  Platform
+                </span>
+<span class="font-medium text-on-surface">Platform 1</span>
+</div>
+</div>
+</div>
+<!-- Bottom Footer Row -->
+<div class="mt-4 flex items-center justify-between">
+<div>
+<span class="text-label font-label text-text-tertiary block">SCHEDULED ARRIVAL</span>
+<span class="text-body-md font-body-md font-bold text-on-surface">14:00 PM</span>
+</div>
+<button class="px-3 py-1.5 rounded-lg bg-surface border border-border text-on-surface hover:bg-primary hover:text-on-primary font-body-sm text-body-sm transition-all duration-150">
+              Open Radar
+            </button>
+</div>
+</div>
+<!-- CARD 3: Swarna Shatabdi -->
+<div class="bg-surface-container-lowest border border-border rounded-xl p-5 card-lift flex flex-col justify-between relative group cursor-pointer">
+<div>
+<!-- Header Row -->
+<div class="flex items-start justify-between mb-3">
+<div>
+<span class="text-label font-label text-text-tertiary tracking-wider">SHATABDI EXPRESS</span>
+<div class="flex items-center gap-2 mt-0.5">
+<h3 class="font-heading-md text-heading-md font-bold text-on-surface tracking-tight">12004</h3>
+</div>
+</div>
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-label font-label bg-success/10 text-success font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+                Boarding
+              </span>
+</div>
+<!-- Route Nodes -->
+<div class="mb-4">
+<div class="flex items-center justify-between text-body-md font-body-md text-on-surface font-medium">
+<span>NDLS</span>
+<span class="material-symbols-outlined text-text-tertiary text-[18px]">east</span>
+<span>LKO</span>
+</div>
+<p class="text-body-sm font-body-sm text-secondary truncate">Swarna Shatabdi</p>
+</div>
+<!-- Telemetry Indicator Line -->
+<div class="w-full bg-surface-container rounded-full h-1.5 mb-4 overflow-hidden flex">
+<div class="bg-info h-full rounded-full" style="width: 5%;"></div>
+</div>
+<!-- Operational Sub-card Metrics -->
+<div class="space-y-2 py-3 border-t border-b border-border">
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">sensors</span>
+                  Status
+                </span>
+<span class="font-medium text-success">Boarding Open</span>
+</div>
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">location_on</span>
+                  Current Sector
+                </span>
+<span class="font-medium text-on-surface truncate max-w-[130px]">New Delhi (NDLS)</span>
+</div>
+<div class="flex items-center justify-between text-body-sm font-body-sm">
+<span class="text-secondary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[16px]">departure_board</span>
+                  Platform
+                </span>
+<span class="font-medium text-on-surface">Platform 4</span>
+</div>
+</div>
+</div>
+<!-- Bottom Footer Row -->
+<div class="mt-4 flex items-center justify-between">
+<div>
+<span class="text-label font-label text-text-tertiary block">SCHEDULED DEPARTURE</span>
+<span class="text-body-md font-body-md font-bold text-on-surface">06:10 AM</span>
+</div>
+<button class="px-3 py-1.5 rounded-lg bg-surface border border-border text-on-surface hover:bg-primary hover:text-on-primary font-body-sm text-body-sm transition-all duration-150">
+              Open Radar
+            </button>
+</div>
+</div>
+</div>
+</section>
+<!-- ==================== IMMERSIVE MAP RADAR TEASER (Duality Feature) ==================== -->
+<section class="w-full max-w-5xl mx-auto mb-space-xl">
+<div class="w-full rounded-xl bg-primary text-on-primary p-6 relative overflow-hidden flex flex-col md:flex-row items-center justify-between border border-border shadow-sm">
+<div class="relative z-10 max-w-md">
+<div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-surface-container-lowest/10 text-label font-label text-surface mb-3 backdrop-blur-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+<span>Dark Canvas Operational Mode</span>
+</div>
+<h3 class="font-heading-lg text-heading-lg font-bold tracking-tight text-on-primary mb-2">
+            Switch to Full-Screen Live Radar
+          </h3>
+<p class="font-body-sm text-body-sm text-on-primary-container leading-relaxed">
+            Monitor real-time train clusters, speed vectors, signal holds, and section occupancy on a low-latency vector grid.
+          </p>
+</div>
+<div class="relative z-10 mt-5 md:mt-0 flex items-center gap-3">
+<button class="px-4 py-2 rounded-lg bg-on-primary text-primary font-body-sm text-body-sm font-semibold hover:bg-surface transition-all duration-150 active:scale-95 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">satellite_alt</span>
+<span>Launch Live Radar</span>
+</button>
+</div>
+<!-- Ambient geometric background accents (pure CSS, no data URLs) -->
+<div class="absolute -right-8 -bottom-12 w-64 h-64 rounded-full bg-gradient-to-tr from-surface-tint/20 to-transparent pointer-events-none"></div>
+</div>
+</section>
+</main>
+<!-- ==================== SUBTLE NETWORK STATS FOOTER ==================== -->
+<footer class="w-full bg-surface-container-lowest border-t border-border mt-auto">
+<div class="w-full max-w-7xl mx-auto px-space-lg py-4 flex flex-col md:flex-row items-center justify-between gap-4 text-label font-label text-text-tertiary">
+<!-- Operational telemetry cluster -->
+<div class="flex items-center gap-4 flex-wrap">
+<div class="flex items-center gap-1.5 text-on-surface">
+<span class="w-2 h-2 rounded-full bg-success"></span>
+<span class="font-medium">All IR CTC Sectors Operational</span>
+</div>
+<span class="text-border">|</span>
+<span class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">sync</span>
+          Synced 8s ago
+        </span>
+<span class="text-border">|</span>
+<span>NTES Engine Latency: 42ms</span>
+</div>
+<!-- Quick links & shortcuts -->
+<div class="flex items-center gap-6">
+<a class="hover:text-on-surface transition-colors" href="#coverage">National Rail Grid Map</a>
+<a class="hover:text-on-surface transition-colors" href="#api">Developer Telemetry API</a>
+<a class="hover:text-on-surface transition-colors" href="#status">Status Dashboard</a>
+<span class="text-on-secondary-container">Exprest Core v2.4.1</span>
+</div>
+</div>
+</footer>
+<!-- Micro-interactions: Hotkey listener for Cmd/Ctrl + K focus search -->
+<script>
+    document.addEventListener('keydown', function(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        const searchInput = document.querySelector('input[type="text"]');
+        if (searchInput) {
+          searchInput.focus();
+        }
+      }
+    });
+  </script>
+</body></html>
