@@ -44,3 +44,17 @@
   --ex-transition-state: 220ms cubic-bezier(0.4, 0, 0.2, 1);
   --ex-transition-page: 260ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Dark Mode Overrides */
+.dark {
+  --ex-bg: #0e0e10;
+  --ex-surface: #18181b;
+  --ex-surface-elevated: #1f1f23;
+  --ex-border: #2e2e34;
+  --ex-text: #f4f4f5;
+  --ex-text-secondary: #a1a1aa;
+  --ex-text-tertiary: #71717a;
+  --ex-accent: #f4f4f5;
+  --ex-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --ex-shadow-md: 0 8px 30px rgba(0, 0, 0, 0.5);
+}

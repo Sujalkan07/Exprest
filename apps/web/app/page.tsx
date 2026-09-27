@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { TopBar } from '@/components/common/TopBar';
 import { TrainSearch } from '@/components/search/TrainSearch';
+import { DarkModeToggle } from '@/components/common/DarkModeToggle';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 interface RecentSearch {
   number: string;
@@ -14,21 +15,27 @@ interface RecentSearch {
 
 export default function HomePage() {
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
+  const [user, setUser] = useState<{ name?: string; email?: string; isLoggedIn?: boolean } | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem('exprest_recent_searches');
-      if (stored) {
-        setRecentSearches(JSON.parse(stored));
-      }
-    } catch {
-      // ignore localStorage errors
-    }
+      if (stored) setRecentSearches(JSON.parse(stored));
+      const userStr = localStorage.getItem('exprest_user');
+      if (userStr) setUser(JSON.parse(userStr));
+    } catch { /* ignore */ }
   }, []);
+
+  const handleSignOut = () => {
+    localStorage.removeItem('exprest_user');
+    setUser(null);
+    router.push('/login');
+  };
 
   return (
     <div className="bg-surface font-body-md text-on-surface antialiased min-h-screen flex flex-col justify-between selection:bg-surface-variant selection:text-primary">
-      
+
       {/* ==================== TOP NAVIGATION BAR ==================== */}
       <header className="w-full bg-surface-container-lowest border-b border-border sticky top-0 z-50">
         <div className="flex justify-between items-center w-full px-space-lg max-w-7xl mx-auto h-14">
@@ -62,21 +69,36 @@ export default function HomePage() {
             </a>
           </nav>
 
-          <div className="flex items-center gap-3">
+          {/* Right actions: Live Feed pill + Dark Mode + User */}
+          <div className="flex items-center gap-2">
             <button className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container hover:bg-surface-variant text-on-surface text-[11px] font-semibold transition-all duration-150 ease-out active:scale-95">
               <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
               <span>Live Feed</span>
             </button>
-            <div className="hidden lg:flex items-center gap-1 px-2 py-1 rounded bg-surface border border-border text-on-secondary-container text-[11px] font-semibold">
-              <span>⌘</span>
-              <span>K</span>
-            </div>
-            <button aria-label="Notifications" className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-surface rounded-lg transition-colors duration-150">
-              <span className="material-symbols-outlined text-[20px]">notifications</span>
-            </button>
-            <button aria-label="Filter Tuning" className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-surface rounded-lg transition-colors duration-150">
-              <span className="material-symbols-outlined text-[20px]">tune</span>
-            </button>
+
+            {/* Dark Mode Toggle */}
+            <DarkModeToggle />
+
+            {/* User Avatar or Sign In */}
+            {user?.isLoggedIn ? (
+              <div className="flex items-center gap-2 border-l border-border pl-2">
+                <button
+                  onClick={handleSignOut}
+                  title="Click to Sign Out"
+                  className="w-8 h-8 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold text-xs ring-2 ring-transparent hover:ring-primary/30 transition-all"
+                >
+                  {user.name ? user.name[0].toUpperCase() : 'U'}
+                </button>
+              </div>
+            ) : (
+              <Link
+                href="/login"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary text-[11px] font-semibold hover:opacity-90 transition-all border-l border-border pl-3 ml-1"
+              >
+                <span className="material-symbols-outlined text-[14px]">account_circle</span>
+                <span>Sign In</span>
+              </Link>
+            )}
           </div>
         </div>
       </header>
@@ -84,7 +106,7 @@ export default function HomePage() {
       {/* ==================== MAIN CONTENT CANVAS ==================== */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-6 py-12 flex flex-col justify-start">
         <section className="w-full flex flex-col items-center text-center mt-2 mb-12">
-          
+
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container-lowest border border-border text-[11px] font-semibold text-on-surface-variant shadow-sm mb-6">
             <span className="inline-block w-2 h-2 rounded-full bg-success"></span>
             <span className="font-medium text-on-surface">Indian Railways Live Network</span>
@@ -120,7 +142,7 @@ export default function HomePage() {
               <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider">
                 Recent Searches
               </span>
-              <button 
+              <button
                 onClick={() => { setRecentSearches([]); localStorage.removeItem('exprest_recent_searches'); }}
                 className="text-[11px] font-semibold text-text-tertiary hover:text-danger transition-colors duration-150 flex items-center gap-1"
               >
@@ -137,13 +159,13 @@ export default function HomePage() {
                       Live
                     </span>
                   </Link>
-                  <button 
+                  <button
                     onClick={() => {
                       const updated = recentSearches.filter(r => r.journeyId !== s.journeyId);
                       setRecentSearches(updated);
                       localStorage.setItem('exprest_recent_searches', JSON.stringify(updated));
                     }}
-                    className="absolute right-2 text-text-tertiary hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity" 
+                    className="absolute right-2 text-text-tertiary hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity"
                     title="Remove"
                   >
                     ✕
