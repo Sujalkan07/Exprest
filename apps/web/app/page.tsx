@@ -5,6 +5,7 @@ import { TrainSearch } from '@/components/search/TrainSearch';
 import { DarkModeToggle } from '@/components/common/DarkModeToggle';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 
 interface RecentSearch {
   number: string;
@@ -17,18 +18,48 @@ export default function HomePage() {
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
   const [user, setUser] = useState<{ name?: string; email?: string; isLoggedIn?: boolean } | null>(null);
   const router = useRouter();
+  const [supabase] = useState(() => createClient());
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem('exprest_recent_searches');
       if (stored) setRecentSearches(JSON.parse(stored));
-      const userStr = localStorage.getItem('exprest_user');
-      if (userStr) setUser(JSON.parse(userStr));
     } catch { /* ignore */ }
-  }, []);
 
-  const handleSignOut = () => {
-    localStorage.removeItem('exprest_user');
+    let isMounted = true;
+    async function loadUser() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!isMounted) return;
+      if (session?.user) {
+        const u = session.user;
+        const name = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'User';
+        setUser({ name, email: u.email || '', isLoggedIn: true });
+      } else {
+        setUser(null);
+      }
+    }
+
+    loadUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) return;
+      if (session?.user) {
+        const u = session.user;
+        const name = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'User';
+        setUser({ name, email: u.email || '', isLoggedIn: true });
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
     setUser(null);
     router.push('/login');
   };

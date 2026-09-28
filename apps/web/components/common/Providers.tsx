@@ -3,36 +3,58 @@
 import React, { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [checked, setChecked] = useState(false);
+  const [supabase] = useState(() => createClient());
 
   useEffect(() => {
-    if (pathname === '/login') {
+    // Exempt /login and public share links from redirect
+    if (pathname === '/login' || pathname.startsWith('/share/')) {
       setChecked(true);
       return;
     }
 
-    try {
-      const userStr = typeof window !== 'undefined' ? localStorage.getItem('exprest_user') : null;
-      if (!userStr) {
-        router.push('/login');
-      } else {
-        const u = JSON.parse(userStr);
-        if (u && u.isLoggedIn) {
-          setChecked(true);
-        } else {
-          router.push('/login');
-        }
-      }
-    } catch {
-      router.push('/login');
-    }
-  }, [pathname, router]);
+    let isMounted = true;
 
-  if (!checked && pathname !== '/login') {
+    async function checkAuth() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!isMounted) return;
+
+        if (!session) {
+          router.push('/login');
+        } else {
+          setChecked(true);
+        }
+      } catch {
+        if (!isMounted) return;
+        router.push('/login');
+      }
+    }
+
+    checkAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) return;
+      if (!session && pathname !== '/login' && !pathname.startsWith('/share/')) {
+        setChecked(false);
+        router.push('/login');
+      } else if (session) {
+        setChecked(true);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [pathname, router, supabase]);
+
+  if (!checked && pathname !== '/login' && !pathname.startsWith('/share/')) {
     return (
       <div className="min-h-screen bg-surface flex flex-col items-center justify-center gap-3 text-secondary text-sm font-body-sm">
         <div className="w-8 h-8 rounded-lg bg-primary text-on-primary flex items-center justify-center font-bold text-sm animate-pulse">

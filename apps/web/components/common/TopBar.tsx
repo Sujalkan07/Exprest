@@ -4,26 +4,49 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { DarkModeToggle } from './DarkModeToggle';
+import { createClient } from '@/lib/supabase/client';
 
 export const TopBar: React.FC = () => {
   const router = useRouter();
+  const [supabase] = useState(() => createClient());
   const [user, setUser] = useState<{ name?: string; email?: string; isLoggedIn?: boolean } | null>(null);
 
   useEffect(() => {
-    try {
-      const userStr = typeof window !== 'undefined' ? localStorage.getItem('exprest_user') : null;
-      if (userStr) {
-        setUser(JSON.parse(userStr));
-      }
-    } catch {
-      setUser(null);
-    }
-  }, []);
+    let isMounted = true;
 
-  const handleSignOut = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('exprest_user');
+    async function loadUser() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!isMounted) return;
+      if (session?.user) {
+        const u = session.user;
+        const name = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'User';
+        setUser({ name, email: u.email || '', isLoggedIn: true });
+      } else {
+        setUser(null);
+      }
     }
+
+    loadUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) return;
+      if (session?.user) {
+        const u = session.user;
+        const name = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'User';
+        setUser({ name, email: u.email || '', isLoggedIn: true });
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
     setUser(null);
     router.push('/login');
   };

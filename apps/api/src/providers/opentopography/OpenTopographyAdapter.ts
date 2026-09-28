@@ -5,7 +5,7 @@ export interface TerrainProvider {
 }
 
 export class OpenTopographyAdapter implements TerrainProvider {
-  private apiKey = process.env.OPENTOPOGRAPHY_API_KEY || '1962defb21ebc350baebe48a7c8b12e6';
+  private apiKey = process.env.OPENTOPOGRAPHY_API_KEY || '';
 
   async getElevationProfile(points: GeoPoint[]): Promise<ElevationPoint[]> {
     try {

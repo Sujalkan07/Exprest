@@ -13,7 +13,8 @@ export const TrainSearch: React.FC = () => {
     queryKey: ['trainSearch', query],
     queryFn: async () => {
       if (!query.trim()) return { data: { items: [] } };
-      const res = await fetch(`http://localhost:4000/api/v1/trains/search?q=${encodeURIComponent(query)}`);
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+      const res = await fetch(`${apiBase}/api/v1/trains/search?q=${encodeURIComponent(query)}`);
       return res.json();
     },
     enabled: query.trim().length > 0,

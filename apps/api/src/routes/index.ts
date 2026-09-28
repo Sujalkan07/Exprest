@@ -98,10 +98,11 @@ export async function registerRoutes(fastify: FastifyInstance) {
   fastify.post('/api/v1/shares', async (req, reply) => {
     const { journeyId } = req.body as { journeyId: string };
     const shareToken = `shr_${Math.random().toString(36).substring(2, 10)}`;
+    const publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000';
     return {
       data: {
         shareToken,
-        url: `http://localhost:3000/share/${shareToken}`,
+        url: `${publicAppUrl}/share/${shareToken}`,
         createdAt: new Date().toISOString()
       },
       meta: makeMeta(req.id)

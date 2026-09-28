@@ -61,7 +61,10 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
   const [isFollowing, setIsFollowing] = useState(true);
   const [mapReady, setMapReady] = useState(false);
 
-  const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_KEY || 'Qfe3bzPFmRUN0IHWv85m';
+  const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_KEY || '';
+  if (!mapTilerKey) {
+    console.warn('[JourneyMap] NEXT_PUBLIC_MAPTILER_KEY environment variable is not defined.');
+  }
 
   const stationList: StopInfo[] = (stops || stations || []).filter(s => s.stationLat && s.stationLon);
   const hasRoute = routeCoordinates && routeCoordinates.length >= 2;

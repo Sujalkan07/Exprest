@@ -14,8 +14,11 @@ export const serverEnvSchema = z.object({
 });
 
 export const clientEnvSchema = z.object({
-  NEXT_PUBLIC_MAPTILER_KEY: z.string().optional().default('mock_maptiler_key'),
   NEXT_PUBLIC_API_URL: z.string().default('http://localhost:4000'),
+  NEXT_PUBLIC_MAPTILER_KEY: z.string().optional(),
+  NEXT_PUBLIC_OPENWEATHER_KEY: z.string().optional(),
+  NEXT_PUBLIC_SUPABASE_URL: z.string().optional(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

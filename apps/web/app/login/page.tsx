@@ -3,9 +3,12 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const router = useRouter();
+  const [supabase] = useState(() => createClient());
+
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -14,66 +17,93 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
 
-    setTimeout(() => {
+    if (!email || !password) {
+      setMessage({ type: 'error', text: 'Please enter both email and password.' });
       setLoading(false);
-      if (!email || !password) {
-        setMessage({ type: 'error', text: 'Please enter both email and password.' });
-        return;
-      }
-      
-      const userObj = {
-        name: name || email.split('@')[0],
-        email,
-        isLoggedIn: true,
-        loginType: 'email'
-      };
-      
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('exprest_user', JSON.stringify(userObj));
-      }
+      return;
+    }
 
-      setMessage({
-        type: 'success',
-        text: isSignUp ? 'Account created successfully! Redirecting...' : 'Signed in successfully! Redirecting...'
-      });
+    try {
+      if (isSignUp) {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: name || email.split('@')[0],
+            },
+          },
+        });
 
-      setTimeout(() => {
-        router.push('/');
-      }, 1200);
-    }, 800);
+        if (error) {
+          setMessage({ type: 'error', text: error.message });
+          setLoading(false);
+          return;
+        }
+
+        if (data.session) {
+          setMessage({
+            type: 'success',
+            text: 'Account created successfully! Redirecting...',
+          });
+          setTimeout(() => router.push('/'), 1000);
+        } else {
+          setMessage({
+            type: 'success',
+            text: 'Registration successful! Please check your email to confirm your account.',
+          });
+          setLoading(false);
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error) {
+          setMessage({ type: 'error', text: error.message });
+          setLoading(false);
+          return;
+        }
+
+        setMessage({
+          type: 'success',
+          text: 'Signed in successfully! Redirecting...',
+        });
+        setTimeout(() => router.push('/'), 1000);
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err?.message || 'Authentication error' });
+      setLoading(false);
+    }
   };
 
-  const handleGoogleSignIn = () => {
+  const handleGoogleSignIn = async () => {
     setLoading(true);
     setMessage(null);
 
-    setTimeout(() => {
-      setLoading(false);
-      const userObj = {
-        name: 'Google User',
-        email: 'user@gmail.com',
-        isLoggedIn: true,
-        loginType: 'google'
-      };
-
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('exprest_user', JSON.stringify(userObj));
-      }
-
-      setMessage({
-        type: 'success',
-        text: 'Google Sign-In successful! Redirecting...'
+    try {
+      const redirectUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : undefined;
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+        },
       });
 
-      setTimeout(() => {
-        router.push('/');
-      }, 1200);
-    }, 800);
+      if (error) {
+        setMessage({ type: 'error', text: error.message });
+        setLoading(false);
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err?.message || 'Google Sign-In failed' });
+      setLoading(false);
+    }
   };
 
   return (
@@ -194,7 +224,7 @@ export default function LoginPage() {
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-label font-label text-secondary">Password</label>
                 {!isSignUp && (
-                  <a href="#" onClick={(e) => { e.preventDefault(); alert('Password reset link sent to your email.'); }} className="text-label font-label text-primary hover:underline">
+                  <a href="#" onClick={(e) => { e.preventDefault(); alert('Password reset link available via Supabase reset.'); }} className="text-label font-label text-primary hover:underline">
                     Forgot password?
                   </a>
                 )}
