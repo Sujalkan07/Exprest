@@ -14,6 +14,28 @@
   --ex-danger: #c33b3b;
   --ex-info: #3568c6;
 
+  /* Material 3 Token Mappings (Light Mode) */
+  --md-on-surface: #1c1b1b;
+  --md-on-surface-variant: #47464a;
+  --md-secondary: #5e5e65;
+  --md-outline: #77767b;
+  --md-outline-variant: #c8c6ca;
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #f7f3f2;
+  --md-surface-container: #f1edec;
+  --md-surface-container-high: #ebe7e7;
+  --md-surface-container-highest: #e5e2e1;
+  --md-primary: #111113;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #1b1b1d;
+  --md-on-primary-container: #e5e1e4;
+  --md-secondary-container: #e3e1ea;
+  --md-on-secondary-container: #46464d;
+  --md-surface-bright: #fdf8f8;
+  --md-surface-dim: #ddd9d9;
+  --md-background: #fdf8f8;
+  --md-on-background: #1c1b1b;
+
   /* Typography Font Stack */
   --ex-font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
@@ -57,4 +79,26 @@
   --ex-accent: #f4f4f5;
   --ex-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
   --ex-shadow-md: 0 8px 30px rgba(0, 0, 0, 0.5);
+
+  /* Material 3 Token Mappings (Dark Mode) */
+  --md-on-surface: #f4f4f5;
+  --md-on-surface-variant: #a1a1aa;
+  --md-secondary: #a1a1aa;
+  --md-outline: #52525b;
+  --md-outline-variant: #3f3f46;
+  --md-surface-container-lowest: #09090b;
+  --md-surface-container-low: #141417;
+  --md-surface-container: #18181b;
+  --md-surface-container-high: #27272a;
+  --md-surface-container-highest: #3f3f46;
+  --md-primary: #f4f4f5;
+  --md-on-primary: #09090b;
+  --md-primary-container: #27272a;
+  --md-on-primary-container: #f4f4f5;
+  --md-secondary-container: #27272a;
+  --md-on-secondary-container: #e4e4e7;
+  --md-surface-bright: #1f1f23;
+  --md-surface-dim: #141417;
+  --md-background: #0e0e10;
+  --md-on-background: #f4f4f5;
 }

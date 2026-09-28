@@ -80,11 +80,15 @@ export class JourneyService {
       };
     }
 
+    const startDate = (runData.run as any)?.startDate || live?.startDate || (runData.run as any)?.serviceDate || serviceDate;
+
     return {
       journeyId,
       train: runData.train,
+      startDate,
       run: {
         ...runData.run,
+        startDate,
         status: runData.liveStatus || live?.status || 'RUNNING',
         delayMinutes,
         isLive: runData.isLive,

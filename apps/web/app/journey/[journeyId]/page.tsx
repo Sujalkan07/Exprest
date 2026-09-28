@@ -86,9 +86,15 @@ export default function JourneyOverviewPage() {
   const originStop = stops[0];
   const destStop = stops[stops.length - 1];
 
+  const originScheduledDep = originStop?.scheduledDeparture;
+  const originDepDateStr = (typeof originScheduledDep === 'string' && originScheduledDep.includes('T'))
+    ? originScheduledDep.split('T')[0]
+    : null;
+
   const serviceDateRaw =
     journey?.run?.startDate ||
     journey?.startDate ||
+    originDepDateStr ||
     (journeyId.includes('_') ? journeyId.split('_').pop() : '');
   const serviceDateFormatted = formatDate(serviceDateRaw) || 'Scheduled Run';
   const isTrainRunning = journey?.run?.isLive && journey?.run?.status === 'running';
@@ -331,8 +337,8 @@ export default function JourneyOverviewPage() {
                 <span className="text-secondary">Yard Handover:</span>
                 <span className="text-success font-medium">
                   {isTrainRunning
-                    ? `${originStop?.stationId || 'LKO'} Yard Clearing OK`
-                    : `Pending ${originStop?.stationId || 'LKO'} Yard Dispatch (${serviceDateFormatted})`}
+                    ? `${originStop?.stationId || journey?.train?.originStationId || 'Yard'} Yard Clearing OK`
+                    : `Pending ${originStop?.stationId || journey?.train?.originStationId || 'Yard'} Yard Dispatch (${serviceDateFormatted})`}
                 </span>
               </div>
             </div>
@@ -421,7 +427,7 @@ export default function JourneyOverviewPage() {
               <div className="h-full bg-gradient-to-r from-success via-primary to-primary rounded-full" style={{ width: `${progress?.percent ?? 0}%` }}></div>
               <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center">
                 <span className="w-3.5 h-3.5 rounded-full bg-primary border-2 border-surface-elevated"></span>
-                <span className="text-label font-label text-secondary mt-2">{originStop?.stationId || 'SC'} (0 km)</span>
+                <span className="text-label font-label text-secondary mt-2">{originStop?.stationId || journey?.train?.originStationId || 'Origin'} (0 km)</span>
               </div>
               <div style={{ left: `${Math.min(95, Math.max(5, progress?.percent ?? 0))}%` }} className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center z-10">
                 <div className="w-7 h-7 rounded-full bg-primary text-on-primary flex items-center justify-center shadow-md animate-bounce ring-4 ring-primary/20">
@@ -433,7 +439,7 @@ export default function JourneyOverviewPage() {
               </div>
               <div className="absolute left-full top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center">
                 <span className="w-3.5 h-3.5 rounded-full bg-outline-variant border-2 border-surface-elevated"></span>
-                <span className="text-label font-label text-secondary mt-2">{destStop?.stationId || 'NZM'} ({Math.round(progress?.totalDistanceKm || 0)} km)</span>
+                <span className="text-label font-label text-secondary mt-2">{destStop?.stationId || journey?.train?.destinationStationId || 'Dest'} ({Math.round(progress?.totalDistanceKm || 0)} km)</span>
               </div>
             </div>
           </div>

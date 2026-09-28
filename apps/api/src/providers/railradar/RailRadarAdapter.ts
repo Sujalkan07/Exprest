@@ -104,6 +104,13 @@ export class RailRadarAdapter implements TrainProvider {
     const originStop = haltStops[0];
     const destStop = haltStops[haltStops.length - 1];
 
+    // Extract real-time startDate from liveData or origin scheduled departure ISO string
+    const originScheduledDep = originStop?.scheduledDeparture;
+    const originDateFromDep = (typeof originScheduledDep === 'string' && originScheduledDep.includes('T'))
+      ? originScheduledDep.split('T')[0]
+      : null;
+    const actualStartDate = liveData?.startDate || originDateFromDep || serviceDate;
+
     const train: Train = {
       id: `TRN_${trainNumber}`,
       number: trainNumber,
@@ -122,14 +129,15 @@ export class RailRadarAdapter implements TrainProvider {
     const run: JourneyRun = {
       id: `journey_${trainNumber}_${serviceDate}`,
       trainId: train.id,
-      serviceDate,
+      serviceDate: actualStartDate,
+      startDate: actualStartDate,
       originStationId: train.originStationId,
       destinationStationId: train.destinationStationId,
       status: liveData?.status || 'RUNNING',
-      startedAt: `${serviceDate}T00:00:00Z`,
+      startedAt: `${actualStartDate}T00:00:00Z`,
       completedAt: null,
       observedAt: liveData?.lastUpdatedAt || new Date().toISOString(),
-    };
+    } as any;
 
     // Build stops from the live route (which has status, actual times, delays)
     const stops: TrainStop[] = haltStops.map((s: any, i: number) => {
@@ -137,8 +145,8 @@ export class RailRadarAdapter implements TrainProvider {
       const coords = coordMap.get(code);
       
       // Time values come directly from live API (already full ISO strings)
-      const scheduledArr = s.scheduledArrival || (s.arrival ? `${serviceDate}T${s.arrival}:00+05:30` : null);
-      const scheduledDep = s.scheduledDeparture || (s.departure ? `${serviceDate}T${s.departure}:00+05:30` : null);
+      const scheduledArr = s.scheduledArrival || (s.arrival ? `${actualStartDate}T${s.arrival}:00+05:30` : null);
+      const scheduledDep = s.scheduledDeparture || (s.departure ? `${actualStartDate}T${s.departure}:00+05:30` : null);
       
       return {
         stationId: code,

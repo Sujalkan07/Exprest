@@ -64,6 +64,7 @@ export interface JourneyRun {
   id: string;
   trainId: string;
   serviceDate: string;
+  startDate?: string;
   originStationId: string;
   destinationStationId: string;
   status: JourneyStatus;
