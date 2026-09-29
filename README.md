@@ -22,17 +22,15 @@ Exprest is a beautifully crafted, real-time train telemetry and journey mapping 
 
 ## 📸 Sneak Peek
 
-*(Note: Add your high-quality screenshots to a `docs/screenshots/` folder in your repo to populate this gallery!)*
-
-| 🗺️ Live Radar Map | ⏱️ Running Chart & Delays |
+| 🗺️ Live Radar Map | 📍 Journey Overview |
 | :---: | :---: |
-| <img src="docs/screenshots/live-map.png" alt="Live Map" width="400" /> | <img src="docs/screenshots/running-chart.png" alt="Running Chart" width="400" /> |
-| **Track trains with smooth MapLibre vector tiles and a glowing HUD radar marker.** | **View exact scheduled vs actual arrival/departure times and delay analytics.** |
+| <img src="docs/screenshots/live-map.png" alt="Live Map" width="500" /> | <img src="docs/screenshots/overview.png" alt="Journey Overview" width="500" /> |
+| **Track trains with smooth MapLibre vector tiles and a glowing HUD radar marker.** | **Monitor real-time velocity, distance remaining, and schedule reliability.** |
 
-| 🔍 Seamless Search | 🌤️ Route Weather & POIs |
+| 🌤️ Route Weather Companion | 📊 Delay Analytics & Elevation |
 | :---: | :---: |
-| <img src="docs/screenshots/search.png" alt="Train Search" width="400" /> | <img src="docs/screenshots/weather.png" alt="Weather" width="400" /> |
-| **Find trains instantly with a responsive search modal.** | **Check ambient microclimate conditions along your route.** |
+| <img src="docs/screenshots/companion.png" alt="Weather Companion" width="500" /> | <img src="docs/screenshots/analytics.png" alt="Analytics" width="500" /> |
+| **Check ambient microclimate conditions and precipitation probability along your route.** | **View exact delay trends, punctuality confidence, and route elevation profiles.** |
 
 ---
 
