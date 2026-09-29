@@ -21,13 +21,21 @@ export class RailRadarAdapter implements TrainProvider {
     };
   }
 
+  private buildUrl(targetUrl: string): string {
+    const scraperKey = process.env.SCRAPER_API_KEY;
+    if (scraperKey) {
+      return `http://api.scraperapi.com?api_key=${scraperKey}&url=${encodeURIComponent(targetUrl)}&keep_headers=true`;
+    }
+    return targetUrl;
+  }
+
   async search(query: string): Promise<Train[]> {
     const q = query.trim();
     if (!q) return [];
 
     try {
       const res = await fetch(
-        `${BASE_URL}/lookup/search/trains?q=${encodeURIComponent(q)}`,
+        this.buildUrl(`${BASE_URL}/lookup/search/trains?q=${encodeURIComponent(q)}`),
         { headers: this.headers }
       );
 
@@ -62,7 +70,7 @@ export class RailRadarAdapter implements TrainProvider {
   async getRun(trainNumber: string, serviceDate: string): Promise<{ train: Train; run: JourneyRun; stops: TrainStop[]; allStops: any[]; liveStatus: string; isLive: boolean } | null> {
     // PRIMARY: use /live which has real-time status, actualArrival, actualDeparture, delays per stop
     const liveRes = await fetch(
-      `${BASE_URL}/trains/${trainNumber}/live`,
+      this.buildUrl(`${BASE_URL}/trains/${trainNumber}/live`),
       { headers: this.headers }
     );
 
@@ -74,7 +82,7 @@ export class RailRadarAdapter implements TrainProvider {
 
     // FALLBACK: use static schedule if live fails
     const staticRes = await fetch(
-      `${BASE_URL}/trains/${trainNumber}`,
+      this.buildUrl(`${BASE_URL}/trains/${trainNumber}`),
       { headers: this.headers }
     );
 
@@ -184,7 +192,7 @@ export class RailRadarAdapter implements TrainProvider {
 
   async getLivePosition(trainNumber: string): Promise<LivePosition | null> {
     const res = await fetch(
-      `${BASE_URL}/trains/${trainNumber}/live`,
+      this.buildUrl(`${BASE_URL}/trains/${trainNumber}/live`),
       { headers: this.headers }
     );
 
@@ -220,7 +228,7 @@ export class RailRadarAdapter implements TrainProvider {
   async getRouteGeometry(trainNumber: string): Promise<{ type: 'LineString'; coordinates: [number, number][] } | null> {
     // Use the static schedule endpoint which has lat/lng for every stop
     const res = await fetch(
-      `${BASE_URL}/trains/${trainNumber}`,
+      this.buildUrl(`${BASE_URL}/trains/${trainNumber}`),
       { headers: this.headers }
     );
 
