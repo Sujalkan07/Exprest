@@ -42,23 +42,59 @@ export class RailRadarAdapter implements TrainProvider {
       if (res.ok) {
         const json = await res.json();
         const items: any[] = json?.data || [];
-        return items.map((item) => ({
-          id: `TRN_${item.number}`,
-          number: item.number,
-          name: item.name,
-          originStationId: item.source || '',
-          destinationStationId: item.dest || '',
-          originStationName: item.sourceName || '',
-          destinationStationName: item.destName || '',
-          type: item.type || '',
-          sourceProvider: 'RailRadar',
-          providerTrainId: item.number,
-          routeVersion: 'v1',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }));
+        if (items.length > 0) {
+          return items.map((item) => ({
+            id: `TRN_${item.number}`,
+            number: item.number,
+            name: item.name,
+            originStationId: item.source || '',
+            destinationStationId: item.dest || '',
+            originStationName: item.sourceName || '',
+            destinationStationName: item.destName || '',
+            type: item.type || '',
+            sourceProvider: 'RailRadar',
+            providerTrainId: item.number,
+            routeVersion: 'v1',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }));
+        }
       } else {
         console.warn(`RailRadar search API returned status: ${res.status}`);
+      }
+
+      // Fallback for 5-digit train numbers if lookup search returned empty results
+      if (/^\d{5}$/.test(q)) {
+        const trainRes = await fetch(
+          this.buildUrl(`${BASE_URL}/trains/${q}`),
+          { headers: this.headers }
+        );
+        if (trainRes.ok) {
+          const trainJson = await trainRes.json();
+          const tData = trainJson?.data;
+          const trainInfo = tData?.train || tData || {};
+          const stops: any[] = tData?.route || tData?.stops || [];
+          const origin = stops[0];
+          const dest = stops[stops.length - 1];
+
+          if (trainInfo.name || trainInfo.number || q) {
+            return [{
+              id: `TRN_${q}`,
+              number: q,
+              name: trainInfo.name || `Train ${q}`,
+              originStationId: origin?.station?.code || origin?.stationCode || '',
+              destinationStationId: dest?.station?.code || dest?.stationCode || '',
+              originStationName: origin?.station?.name || origin?.stationName || '',
+              destinationStationName: dest?.station?.name || dest?.stationName || '',
+              type: trainInfo.type || 'Express',
+              sourceProvider: 'RailRadar',
+              providerTrainId: q,
+              routeVersion: 'v1',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            }];
+          }
+        }
       }
     } catch (err) {
       console.error('RailRadar search API error:', err);

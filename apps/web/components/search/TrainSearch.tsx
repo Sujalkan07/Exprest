@@ -15,12 +15,12 @@ export const TrainSearch: React.FC<TrainSearchProps> = ({ onSearchSelect }) => {
   const [query, setQuery] = React.useState('');
   const router = useRouter();
 
-  const { data, isLoading } = useQuery<{ data: Train[]; success: boolean }>({
+  const { data, isLoading, isError, error } = useQuery<{ data: Train[]; success: boolean }>({
     queryKey: ['trainSearch', query],
     queryFn: async () => {
       if (!query.trim()) return { data: [], success: true };
       const res = await fetch(`${API_BASE}/api/v1/trains/search?q=${encodeURIComponent(query)}`);
-      if (!res.ok) throw new Error('Search failed');
+      if (!res.ok) throw new Error(`Search failed (${res.status})`);
       return res.json();
     },
     enabled: query.trim().length > 0,
@@ -76,7 +76,7 @@ export const TrainSearch: React.FC<TrainSearchProps> = ({ onSearchSelect }) => {
         <div className="absolute top-[68px] left-0 w-full z-50 bg-surface-container-lowest border border-border rounded-xl shadow-lg overflow-hidden divide-y divide-border">
           {trains.length === 0 && !isLoading ? (
             <div className="p-4 text-[13px] text-on-surface-variant text-center">
-              Nothing matched — try a different number or name.
+              {isError ? `Search error: ${(error as Error)?.message || 'Make sure API server is running on port 4000'}` : 'Nothing matched — try a different number or name.'}
             </div>
           ) : (
             trains.map((train) => (
