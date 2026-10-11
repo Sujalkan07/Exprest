@@ -39,3 +39,6 @@ live.json
 live26.json
 temp.json
 api_response.json
+
+# TypeScript build info files (ignore generated tsbuildinfo)
+*.tsbuildinfo
