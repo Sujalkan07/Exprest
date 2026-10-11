@@ -32,7 +32,18 @@ export default function AnalyticsPage() {
     refetchInterval: 30_000,
   });
 
+  const { data: analyticsRes } = useQuery({
+    queryKey: ['journeyAnalytics', journeyId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/v1/journeys/${journeyId}/analytics`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 60_000,
+  });
+
   const journey = data?.data;
+  const analyticsData = analyticsRes?.data;
   const progress = journey?.progress;
   const stops: any[] = journey?.stops || [];
   const currentStopIdx = progress?.currentStopIdx ?? 0;
@@ -40,7 +51,7 @@ export default function AnalyticsPage() {
   const currentStop = stops[currentStopIdx];
   const nextStop = stops[nextStopIdx];
   const delayMinutes = journey?.run?.delayMinutes ?? 0;
-  const currentPosition = journey?.run?.currentLocation;
+  const currentPosition = journey?.livePosition || journey?.run?.currentLocation;
 
   // Derive Max Delay stop
   const maxDelayStop = useMemo(() => {
@@ -48,14 +59,14 @@ export default function AnalyticsPage() {
     return stops.reduce((max, s) => ((s.delayMinutes || 0) > (max.delayMinutes || 0) ? s : max), stops[0]);
   }, [stops]);
 
-  // Derive Punctuality metrics
+  // Derive Punctuality metrics honestly from real stops
   const onTimeCount = useMemo(() => {
     return stops.filter(s => (s.delayMinutes || 0) <= 15).length;
   }, [stops]);
 
-  const punctualityPercent = stops.length ? Math.round((onTimeCount / stops.length) * 100) : 92;
+  const punctualityPercent = stops.length > 0 ? Math.round((onTimeCount / stops.length) * 100) : null;
 
-  // Selected 6 key stations for Elevation Profile X-axis
+  // Selected key stations for Elevation Profile X-axis
   const elevationNodes = useMemo(() => {
     if (!stops.length) return [];
     if (stops.length <= 6) return stops;
@@ -70,12 +81,26 @@ export default function AnalyticsPage() {
     ];
   }, [stops]);
 
+  const elevationProfile: any[] = analyticsData?.elevationProfile || [];
+  const hasElevationData = elevationProfile.length >= 2;
+
+  const elevationStats = useMemo(() => {
+    if (!hasElevationData) return null;
+    const elevations = elevationProfile.map((ep: any) => ep.elevationM || 0);
+    return {
+      peak: Math.max(...elevations),
+      min: Math.min(...elevations),
+      current: elevationProfile[Math.min(currentStopIdx, elevationProfile.length - 1)]?.elevationM || 0,
+    };
+  }, [elevationProfile, hasElevationData, currentStopIdx]);
+
   if (isLoading) return <div className="p-8 text-center text-secondary">Loading Analytics...</div>;
   if (error || !journey) return <div className="p-8 text-center text-red-500">Error loading analytics.</div>;
 
-  const currentSpeed = Math.round(currentPosition?.speedKph || (progress?.coveredDistanceKm ? 95 : 0));
+  // Real speed without fabricated defaults
+  const currentSpeed = Math.round(currentPosition?.speedKph || 0);
   const maxSpeed = 130;
-  const speedPercentage = Math.round((currentSpeed / maxSpeed) * 100);
+  const speedPercentage = currentSpeed > 0 ? Math.round((currentSpeed / maxSpeed) * 100) : 0;
 
   return (
     <div className="bg-surface-elevated text-on-surface antialiased font-body-md text-body-md min-h-screen">
@@ -227,69 +252,90 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="flex items-center flex-wrap gap-2 text-label font-label tnum">
-              <span className="px-2.5 py-1 rounded bg-surface border border-border text-on-surface flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                Peak: 480m (Deccan Plateau)
-              </span>
-              <span className="px-2.5 py-1 rounded bg-surface border border-border text-secondary">
-                Min: 18m
-              </span>
-              <span className="px-2.5 py-1 rounded bg-surface-container border border-border text-primary font-semibold">
-                Current: 275m
-              </span>
+              {hasElevationData && elevationStats ? (
+                <>
+                  <span className="px-2.5 py-1 rounded bg-surface border border-border text-on-surface flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                    Peak: {elevationStats.peak}m
+                  </span>
+                  <span className="px-2.5 py-1 rounded bg-surface border border-border text-secondary">
+                    Min: {elevationStats.min}m
+                  </span>
+                  <span className="px-2.5 py-1 rounded bg-surface-container border border-border text-primary font-semibold">
+                    Current: {elevationStats.current}m
+                  </span>
+                </>
+              ) : (
+                <span className="px-2.5 py-1 rounded bg-surface border border-border text-secondary">
+                  Elevation profile: Data unavailable for this corridor
+                </span>
+              )}
             </div>
           </div>
 
           <div className="relative w-full mt-6 select-none">
             {/* Live Train Indicator on Elevation SVG */}
-            <div className="absolute left-[${Math.min(95, Math.max(5, progress?.percent || 0))}%] top-6 -translate-x-1/2 z-20 hidden md:flex flex-col items-center pointer-events-none">
-              <div className="bg-primary text-on-primary px-3 py-1.5 rounded shadow-lg text-label font-label whitespace-nowrap flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-success pulse-live"></span>
-                <span>Current: {Math.round(progress?.coveredDistanceKm || 0)} km</span>
-                <span className="text-outline-variant">|</span>
-                <span className="tnum">Alt: 275m</span>
-                <span className="text-outline-variant">|</span>
-                <span className="tnum">{currentSpeed} km/h</span>
+            {hasElevationData && (
+              <div className="absolute left-[${Math.min(95, Math.max(5, progress?.percent || 0))}%] top-6 -translate-x-1/2 z-20 hidden md:flex flex-col items-center pointer-events-none">
+                <div className="bg-primary text-on-primary px-3 py-1.5 rounded shadow-lg text-label font-label whitespace-nowrap flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success pulse-live"></span>
+                  <span>Current: {Math.round(progress?.coveredDistanceKm || 0)} km</span>
+                  {elevationStats && (
+                    <>
+                      <span className="text-outline-variant">|</span>
+                      <span className="tnum">Alt: {elevationStats.current}m</span>
+                    </>
+                  )}
+                  <span className="text-outline-variant">|</span>
+                  <span className="tnum">{currentSpeed} km/h</span>
+                </div>
+                <div className="w-0.5 h-3 bg-primary"></div>
               </div>
-              <div className="w-0.5 h-3 bg-primary"></div>
-            </div>
+            )}
 
             <div className="w-full overflow-x-auto pb-2">
-              <svg className="w-full min-w-[760px] h-48 sm:h-56" preserveAspectRatio="none" viewBox="0 0 1000 240">
-                <defs>
-                  <linearGradient id="elevationGrad" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.25"></stop>
-                    <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.0"></stop>
-                  </linearGradient>
-                </defs>
+              {hasElevationData ? (
+                <svg className="w-full min-w-[760px] h-48 sm:h-56" preserveAspectRatio="none" viewBox="0 0 1000 240">
+                  <defs>
+                    <linearGradient id="elevationGrad" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.25"></stop>
+                      <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.0"></stop>
+                    </linearGradient>
+                  </defs>
 
-                <g stroke="#e7e7ea" strokeDasharray="2,2" strokeWidth="1">
-                  <line x1="45" x2="980" y1="20" y2="20"></line>
-                  <line x1="45" x2="980" y1="65" y2="65"></line>
-                  <line x1="45" x2="980" y1="110" y2="110"></line>
-                  <line x1="45" x2="980" y1="155" y2="155"></line>
-                  <line x1="45" x2="980" y1="200" y2="200"></line>
-                </g>
+                  <g stroke="#e7e7ea" strokeDasharray="2,2" strokeWidth="1">
+                    <line x1="45" x2="980" y1="20" y2="20"></line>
+                    <line x1="45" x2="980" y1="65" y2="65"></line>
+                    <line x1="45" x2="980" y1="110" y2="110"></line>
+                    <line x1="45" x2="980" y1="155" y2="155"></line>
+                    <line x1="45" x2="980" y1="200" y2="200"></line>
+                  </g>
 
-                <g className="text-[10px] font-mono fill-secondary" textAnchor="end">
-                  <text x="38" y="24">800m</text>
-                  <text x="38" y="69">600m</text>
-                  <text x="38" y="114">400m</text>
-                  <text x="38" y="159">200m</text>
-                  <text x="38" y="204">0m</text>
-                </g>
+                  <g className="text-[10px] font-mono fill-secondary" textAnchor="end">
+                    <text x="38" y="24">800m</text>
+                    <text x="38" y="69">600m</text>
+                    <text x="38" y="114">400m</text>
+                    <text x="38" y="159">200m</text>
+                    <text x="38" y="204">0m</text>
+                  </g>
 
-                <path d="M 50 200 L 50 120 C 200 80, 400 180, 600 60 C 750 30, 850 140, 980 150 L 980 200 Z" fill="url(#elevationGrad)"></path>
-                <path d="M 50 120 C 200 80, 400 180, 600 60 C 750 30, 850 140, 980 150" fill="none" stroke="#0284c7" strokeLinecap="round" strokeWidth="3"></path>
+                  <path d="M 50 200 L 50 120 C 200 80, 400 180, 600 60 C 750 30, 850 140, 980 150 L 980 200 Z" fill="url(#elevationGrad)"></path>
+                  <path d="M 50 120 C 200 80, 400 180, 600 60 C 750 30, 850 140, 980 150" fill="none" stroke="#0284c7" strokeLinecap="round" strokeWidth="3"></path>
 
-                {/* Nodes */}
-                {elevationNodes.map((stn, idx) => {
-                  const cx = 50 + (idx / Math.max(1, elevationNodes.length - 1)) * 930;
-                  return (
-                    <circle key={stn.stationId || idx} cx={cx} cy="200" fill="#0284c7" r="4" stroke="#ffffff" strokeWidth="1.5" />
-                  );
-                })}
-              </svg>
+                  {/* Nodes */}
+                  {elevationNodes.map((stn, idx) => {
+                    const cx = 50 + (idx / Math.max(1, elevationNodes.length - 1)) * 930;
+                    return (
+                      <circle key={stn.stationId || idx} cx={cx} cy="200" fill="#0284c7" r="4" stroke="#ffffff" strokeWidth="1.5" />
+                    );
+                  })}
+                </svg>
+              ) : (
+                <div className="py-12 text-center text-body-sm font-body-sm text-secondary bg-surface/40 rounded-lg border border-dashed border-border">
+                  <span className="material-symbols-outlined text-[32px] text-outline mb-1">terrain</span>
+                  <p>Topographical elevation measurements are currently unavailable for this corridor.</p>
+                </div>
+              )}
             </div>
 
             {/* X-axis Station Labels */}
@@ -297,7 +343,7 @@ export default function AnalyticsPage() {
               {elevationNodes.map((stn, idx) => (
                 <div key={stn.stationId || idx} className="flex flex-col items-center">
                   <span className={`font-semibold ${idx === currentStopIdx ? 'text-warning' : 'text-primary'}`}>{stn.stationId}</span>
-                  <span className="text-label text-outline">{Math.round(stn.distanceFromSourceKm || 0)} km</span>
+                  <span className="text-label text-outline">{Math.round(stn.distanceKm ?? stn.distanceFromSourceKm ?? 0)} km</span>
                 </div>
               ))}
             </div>
@@ -380,11 +426,15 @@ export default function AnalyticsPage() {
                 <div className="p-3.5 rounded-lg border border-border bg-surface flex items-center justify-between">
                   <div>
                     <span className="text-label font-label uppercase tracking-wider text-outline">Terminal Arrival Confidence</span>
-                    <div className="text-heading-lg font-heading-lg text-primary tracking-tight tnum mt-0.5">{punctualityPercent}%</div>
-                    <span className="text-label font-label text-success">Within buffer threshold of 15 min</span>
+                    <div className="text-heading-lg font-heading-lg text-primary tracking-tight tnum mt-0.5">
+                      {punctualityPercent != null ? `${punctualityPercent}%` : '—'}
+                    </div>
+                    <span className="text-label font-label text-success">
+                      {punctualityPercent != null ? `${onTimeCount} of ${stops.length} halts within 15m buffer` : 'Awaiting timetable data'}
+                    </span>
                   </div>
                   <div className="w-12 h-12 rounded-full border-2 border-primary flex items-center justify-center font-label text-primary font-bold">
-                    {punctualityPercent}%
+                    {punctualityPercent != null ? `${punctualityPercent}%` : '—'}
                   </div>
                 </div>
 
@@ -395,7 +445,9 @@ export default function AnalyticsPage() {
                     <div className="text-heading-lg font-heading-lg text-primary tracking-tight tnum mt-0.5">
                       {currentSpeed} <span className="text-body-md font-body-md text-secondary font-normal">/ {maxSpeed} km/h</span>
                     </div>
-                    <span className="text-label font-label text-secondary">Operating at {speedPercentage}% of Max Authorized</span>
+                    <span className="text-label font-label text-secondary">
+                      {currentSpeed > 0 ? `Operating at ${speedPercentage}% of Max Authorized` : 'Train stationary / awaiting telemetry'}
+                    </span>
                   </div>
                   <span className="material-symbols-outlined text-outline text-[28px]">speed</span>
                 </div>
@@ -403,11 +455,15 @@ export default function AnalyticsPage() {
                 {/* Metric 3 */}
                 <div className="p-3.5 rounded-lg border border-border bg-surface flex items-center justify-between">
                   <div>
-                    <span className="text-label font-label uppercase tracking-wider text-outline">Green Signal Aspect Clearance</span>
-                    <div className="text-heading-lg font-heading-lg text-primary tracking-tight tnum mt-0.5">{delayMinutes <= 5 ? '98.2%' : '92.4%'}</div>
-                    <span className="text-label font-label text-secondary">Automatic Block Signaling (ABS) Clear</span>
+                    <span className="text-label font-label uppercase tracking-wider text-outline">Signal & Headway Compliance</span>
+                    <div className="text-heading-lg font-heading-lg text-primary tracking-tight tnum mt-0.5">
+                      {delayMinutes <= 0 ? 'Clear (On Time)' : delayMinutes <= 15 ? `Nominal (+${delayMinutes}m)` : `Caution (+${delayMinutes}m)`}
+                    </div>
+                    <span className="text-label font-label text-secondary">
+                      {delayMinutes <= 0 ? 'Automatic Block Signaling (ABS) Clear' : 'Track section headway spacing active'}
+                    </span>
                   </div>
-                  <span className="w-3 h-3 rounded-full bg-success"></span>
+                  <span className={`w-3 h-3 rounded-full ${delayMinutes <= 15 ? 'bg-success' : 'bg-warning'}`}></span>
                 </div>
 
               </div>
@@ -468,7 +524,7 @@ export default function AnalyticsPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="py-3.5 px-3 tnum text-secondary">{Math.round(stop.distanceFromSourceKm || 0)} km</td>
+                      <td className="py-3.5 px-3 tnum text-secondary">{Math.round(stop.distanceKm ?? stop.distanceFromSourceKm ?? 0)} km</td>
                       <td className="py-3.5 px-3 tnum text-secondary">
                         {stop.scheduledArrival ? formatTime(stop.scheduledArrival) : 'Source'} / {stop.scheduledDeparture ? formatTime(stop.scheduledDeparture) : 'Term'}
                       </td>

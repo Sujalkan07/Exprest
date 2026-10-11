@@ -1,7 +1,7 @@
-import { NearbyPoi, PoiCategory, GeoBounds } from '@exprest/types';
+import { NearbyPoi, PoiCategory, GeoBounds, GeoPoint } from '@exprest/types';
 
 export interface PoiProvider {
-  searchNearby(bounds: GeoBounds, category?: PoiCategory): Promise<NearbyPoi[]>;
+  searchNearby(bounds: GeoBounds, category?: PoiCategory, routePoints?: GeoPoint[]): Promise<NearbyPoi[]>;
 }
 
 const CATEGORY_OVERPASS_MAP: Record<string, string[]> = {
@@ -19,16 +19,29 @@ function buildOverpassQuery(bounds: GeoBounds, filters: string[]): string {
   return `[out:json][timeout:15];(${nodeFilters});out body 30;`;
 }
 
+function haversineDistanceM(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000; // meters
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
 export class OverpassAdapter implements PoiProvider {
   private readonly OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 
-  async searchNearby(bounds: GeoBounds, category?: PoiCategory): Promise<NearbyPoi[]> {
+  async searchNearby(bounds: GeoBounds, category?: PoiCategory, routePoints?: GeoPoint[]): Promise<NearbyPoi[]> {
     try {
       const categories = category
         ? { [category]: CATEGORY_OVERPASS_MAP[category] || [] }
         : CATEGORY_OVERPASS_MAP;
 
       const allPois: NearbyPoi[] = [];
+      const seenIds = new Set<string>();
 
       // Query each category
       for (const [cat, filters] of Object.entries(categories)) {
@@ -47,16 +60,36 @@ export class OverpassAdapter implements PoiProvider {
         const json = await res.json();
         const elements: any[] = json?.elements || [];
 
-        for (const el of elements.slice(0, 8)) {
+        for (const el of elements.slice(0, 10)) {
+          const poiId = `poi_osm_${el.id}`;
+          if (seenIds.has(poiId)) continue;
+
           const name = el.tags?.name || el.tags?.['name:en'] || el.tags?.official_name;
-          if (!name) continue;
+          if (!name || typeof el.lat !== 'number' || typeof el.lon !== 'number') continue;
+
+          // Calculate distance to the nearest route point or bounding box center
+          let minDistanceM = 0;
+          if (routePoints && routePoints.length > 0) {
+            let shortest = Infinity;
+            for (const pt of routePoints) {
+              const d = haversineDistanceM(el.lat, el.lon, pt.latitude, pt.longitude);
+              if (d < shortest) shortest = d;
+            }
+            minDistanceM = shortest !== Infinity ? shortest : 0;
+          } else {
+            const midLat = (bounds.minLat + bounds.maxLat) / 2;
+            const midLon = (bounds.minLon + bounds.maxLon) / 2;
+            minDistanceM = haversineDistanceM(el.lat, el.lon, midLat, midLon);
+          }
+
+          seenIds.add(poiId);
           allPois.push({
-            id: `poi_osm_${el.id}`,
+            id: poiId,
             category: cat as PoiCategory,
             name,
             latitude: el.lat,
             longitude: el.lon,
-            distanceFromRouteM: Math.round(Math.random() * 2000 + 100), // approx
+            distanceFromRouteM: minDistanceM,
             source: 'OpenStreetMap/Overpass',
             tags: el.tags || {},
           });

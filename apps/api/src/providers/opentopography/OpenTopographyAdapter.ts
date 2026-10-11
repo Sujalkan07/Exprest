@@ -25,14 +25,10 @@ export class OpenTopographyAdapter implements TerrainProvider {
         }
       }
     } catch (err) {
-      console.warn('OpenTopography live fetch failed, using fallback profile:', err);
+      console.warn('OpenTopography live fetch failed:', err);
     }
 
-    return points.map((pt, i) => ({
-      distanceKm: i * 40,
-      latitude: pt.latitude,
-      longitude: pt.longitude,
-      elevationM: Math.floor(150 + Math.sin(i / 2) * 350 + (i * 15))
-    }));
+    // Do not return synthetic/fabricated elevation values when provider is unavailable
+    return [];
   }
 }

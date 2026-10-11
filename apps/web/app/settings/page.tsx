@@ -4,8 +4,53 @@ import React, { useState } from 'react';
 import { TopBar } from '@/components/common/TopBar';
 
 export default function SettingsPage() {
-  const [theme, setTheme] = useState('light');
+  const [theme, setTheme] = useState('system');
   const [reducedMotion, setReducedMotion] = useState(false);
+
+  React.useEffect(() => {
+    // Read persisted theme
+    const storedTheme = localStorage.getItem('exprest_theme');
+    const storedDark = localStorage.getItem('exprest_dark');
+    if (storedTheme) {
+      setTheme(storedTheme);
+    } else if (storedDark !== null) {
+      setTheme(storedDark === 'true' ? 'dark' : 'light');
+    }
+
+    // Read persisted reduced motion
+    const storedMotion = localStorage.getItem('exprest_reduced_motion');
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const isMotionReduced = storedMotion !== null ? storedMotion === 'true' : prefersReducedMotion;
+    setReducedMotion(isMotionReduced);
+  }, []);
+
+  const handleThemeChange = (selectedTheme: string) => {
+    setTheme(selectedTheme);
+    localStorage.setItem('exprest_theme', selectedTheme);
+
+    if (selectedTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('exprest_dark', 'true');
+    } else if (selectedTheme === 'light') {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('exprest_dark', 'false');
+    } else {
+      // System
+      localStorage.removeItem('exprest_dark');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (prefersDark) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+  };
+
+  const handleMotionChange = (checked: boolean) => {
+    setReducedMotion(checked);
+    localStorage.setItem('exprest_reduced_motion', String(checked));
+    document.documentElement.setAttribute('data-reduced-motion', String(checked));
+  };
 
   return (
     <div className="min-h-screen bg-bg text-text flex flex-col">
@@ -21,7 +66,7 @@ export default function SettingsPage() {
               {['light', 'system', 'dark'].map((t) => (
                 <button
                   key={t}
-                  onClick={() => setTheme(t)}
+                  onClick={() => handleThemeChange(t)}
                   className={`px-4 py-2 text-xs font-semibold rounded-control capitalize border transition-colors ${
                     theme === t
                       ? 'bg-accent text-white border-accent'
@@ -42,7 +87,7 @@ export default function SettingsPage() {
             <input
               type="checkbox"
               checked={reducedMotion}
-              onChange={(e) => setReducedMotion(e.target.checked)}
+              onChange={(e) => handleMotionChange(e.target.checked)}
               className="w-5 h-5 rounded border-border text-accent focus:ring-accent"
             />
           </div>

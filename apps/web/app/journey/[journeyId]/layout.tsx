@@ -54,10 +54,14 @@ export default function JourneyLayout({ children }: { children: React.ReactNode 
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ journeyId }),
         });
-        const json = await res.json();
-        setShareToken(json?.data?.shareToken || 'shr_error');
+        if (res.ok) {
+          const json = await res.json();
+          setShareToken(json?.data?.shareToken || journeyId);
+        } else {
+          setShareToken(journeyId);
+        }
       } catch {
-        setShareToken('shr_error');
+        setShareToken(journeyId);
       }
     }
     setShowShareModal(true);

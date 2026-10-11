@@ -6,7 +6,6 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const OPENWEATHER_KEY = process.env.NEXT_PUBLIC_OPENWEATHER_KEY || '';
 
 function formatTime(isoString: string | null | undefined, extraDelayMinutes: number = 0): string {
   if (!isoString) return '—';
@@ -57,43 +56,44 @@ export default function CompanionPage() {
     ];
   }, [stops]);
 
-  // Fetch Weather for Current Station
-  const { data: currentWeather } = useQuery({
-    queryKey: ['weather', currentStop?.stationLat, currentStop?.stationLon],
+  // Fetch Weather through secure backend API
+  const { data: weatherRes } = useQuery({
+    queryKey: ['journeyWeather', journeyId],
     queryFn: async () => {
-      if (!currentStop?.stationLat || !currentStop?.stationLon) return null;
-      const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${currentStop.stationLat}&lon=${currentStop.stationLon}&appid=${OPENWEATHER_KEY}&units=metric`);
+      const res = await fetch(`${API_BASE}/api/v1/journeys/${journeyId}/weather`);
       if (!res.ok) return null;
       return res.json();
     },
-    enabled: !!currentStop?.stationLat && !!currentStop?.stationLon,
+    refetchInterval: 60_000,
   });
 
-  // Fetch Weather for Next Station
-  const { data: nextWeather } = useQuery({
-    queryKey: ['weather', nextStop?.stationLat, nextStop?.stationLon],
-    queryFn: async () => {
-      if (!nextStop?.stationLat || !nextStop?.stationLon) return null;
-      const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${nextStop.stationLat}&lon=${nextStop.stationLon}&appid=${OPENWEATHER_KEY}&units=metric`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    enabled: !!nextStop?.stationLat && !!nextStop?.stationLon,
-  });
+  const weatherData = weatherRes?.data;
+  const currentWeather = weatherData?.currentStation?.weather;
+  const nextWeather = weatherData?.nextStation?.weather;
+  const destWeather = weatherData?.destination?.weather;
 
   if (isLoading) return <div className="p-8 text-center text-secondary">Loading Companion...</div>;
   if (error || !journey) return <div className="p-8 text-center text-red-500">Error loading companion.</div>;
 
-  const curTemp = currentWeather?.main?.temp ? Math.round(currentWeather.main.temp) : 31;
-  const curHigh = currentWeather?.main?.temp_max ? Math.round(currentWeather.main.temp_max) : 35;
-  const curCond = currentWeather?.weather?.[0]?.main || 'Sunny & Humid';
-  const curHum = currentWeather?.main?.humidity || 65;
-  const curWind = currentWeather?.wind?.speed ? Math.round(currentWeather.wind.speed * 3.6) : 12;
+  const curTemp = currentWeather?.temperatureCelsius != null ? `${currentWeather.temperatureCelsius}` : '—';
+  const curHigh = currentWeather?.tempMaxC != null ? `${currentWeather.tempMaxC}` : '—';
+  const curCond = currentWeather?.description || 'Weather sync active';
+  const curHum = currentWeather?.humidityPct != null ? `${currentWeather.humidityPct}` : '—';
+  const curWind = currentWeather?.windSpeedKph != null ? `${currentWeather.windSpeedKph}` : '—';
 
-  const nextTemp = nextWeather?.main?.temp ? Math.round(nextWeather.main.temp) : 29;
-  const nextHigh = nextWeather?.main?.temp_max ? Math.round(nextWeather.main.temp_max) : 31;
-  const nextCond = nextWeather?.weather?.[0]?.main || 'Scattered Overcast';
-  const nextHum = nextWeather?.main?.humidity || 72;
+  const nextTemp = nextWeather?.temperatureCelsius != null ? `${nextWeather.temperatureCelsius}` : '—';
+  const nextHigh = nextWeather?.tempMaxC != null ? `${nextWeather.tempMaxC}` : '—';
+  const nextCond = nextWeather?.description || 'Forecast syncing';
+  const nextHum = nextWeather?.humidityPct != null ? `${nextWeather.humidityPct}` : '—';
+  const nextWind = nextWeather?.windSpeedKph != null ? `${nextWeather.windSpeedKph}` : '—';
+  const nextRain = nextWeather?.rainProbabilityPct != null ? `${nextWeather.rainProbabilityPct}% Chance` : '—';
+
+  const destTemp = destWeather?.temperatureCelsius != null ? `${destWeather.temperatureCelsius}` : '—';
+  const destHigh = destWeather?.tempMaxC != null ? `${destWeather.tempMaxC}` : '—';
+  const destCond = destWeather?.description || 'Destination telemetry syncing';
+  const destHum = destWeather?.humidityPct != null ? `${destWeather.humidityPct}` : '—';
+  const destWind = destWeather?.windSpeedKph != null ? `${destWeather.windSpeedKph}` : '—';
+  const destRain = destWeather?.rainProbabilityPct != null ? `${destWeather.rainProbabilityPct}% Chance` : '—';
 
   return (
     <div className="bg-surface-elevated text-on-surface antialiased font-body-md text-body-md min-h-screen">
@@ -171,26 +171,26 @@ export default function CompanionPage() {
                 <div className="grid grid-cols-2 gap-3.5 mb-5">
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Humidity</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">{curHum}%</div>
+                    <div className="text-body-md font-body-md font-semibold text-primary">{curHum !== '—' ? `${curHum}%` : '—'}</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Wind</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">{curWind} km/h</div>
+                    <div className="text-body-md font-body-md font-semibold text-primary">{curWind !== '—' ? `${curWind} km/h` : '—'}</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">UV Index</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">6 (Moderate)</div>
+                    <div className="text-body-md font-body-md font-semibold text-secondary">Sensor unmonitored</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Air Quality (AQI)</div>
-                    <div className="text-body-md font-body-md font-semibold text-success">54 (Good)</div>
+                    <div className="text-body-md font-body-md font-semibold text-secondary">Sensor unmonitored</div>
                   </div>
                 </div>
               </div>
 
               <div className="pt-3 border-t border-border/60 flex items-center gap-2 text-label font-label text-text-tertiary">
                 <span className="material-symbols-outlined text-[15px]">straighten</span>
-                <span>Track elevation: 124m · OpenWeather Meteorological Sync</span>
+                <span>Track elevation: {currentStop?.stationLat != null ? 'Synced' : 'Unavailable'} · Meteorological Sync</span>
               </div>
             </div>
 
@@ -210,8 +210,8 @@ export default function CompanionPage() {
 
                 <div className="flex items-baseline justify-between mb-6 pb-4 border-b border-border/70">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-display-lg font-display-lg text-primary tracking-tight">{nextTemp}°C</span>
-                    <span className="text-body-md font-body-md text-secondary">/ {nextHigh}° High</span>
+                    <span className="text-display-lg font-display-lg text-primary tracking-tight">{nextTemp !== '—' ? `${nextTemp}°C` : '—'}</span>
+                    {nextHigh !== '—' && <span className="text-body-md font-body-md text-secondary">/ {nextHigh}° High</span>}
                   </div>
                   <div className="flex items-center gap-1.5 text-secondary">
                     <span className="material-symbols-outlined text-[26px]">partly_cloudy_day</span>
@@ -222,19 +222,19 @@ export default function CompanionPage() {
                 <div className="grid grid-cols-2 gap-3.5 mb-5">
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Rain Probability</div>
-                    <div className="text-body-md font-body-md font-semibold text-info">15% Chance</div>
+                    <div className="text-body-md font-body-md font-semibold text-info">{nextRain}</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Humidity</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">{nextHum}%</div>
+                    <div className="text-body-md font-body-md font-semibold text-primary">{nextHum !== '—' ? `${nextHum}%` : '—'}</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Wind</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">14 km/h NE</div>
+                    <div className="text-body-md font-body-md font-semibold text-primary">{nextWind !== '—' ? `${nextWind} km/h` : '—'}</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Dew Point</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">20°C</div>
+                    <div className="text-body-md font-body-md font-semibold text-secondary">Sensor unmonitored</div>
                   </div>
                 </div>
               </div>
@@ -261,38 +261,38 @@ export default function CompanionPage() {
 
                 <div className="flex items-baseline justify-between mb-6 pb-4 border-b border-border/70">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-display-lg font-display-lg text-primary tracking-tight">24°C</span>
-                    <span className="text-body-md font-body-md text-secondary">/ 28° High</span>
+                    <span className="text-display-lg font-display-lg text-primary tracking-tight">{destTemp !== '—' ? `${destTemp}°C` : '—'}</span>
+                    {destHigh !== '—' && <span className="text-body-md font-body-md text-secondary">/ {destHigh}° High</span>}
                   </div>
                   <div className="flex items-center gap-1.5 text-secondary">
                     <span className="material-symbols-outlined text-[26px]">nights_stay</span>
-                    <span className="text-body-sm font-body-sm font-medium text-on-surface">Pleasant &amp; Clear</span>
+                    <span className="text-body-sm font-body-sm font-medium text-on-surface">{destCond}</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3.5 mb-5">
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Rain Probability</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">0% (Dry)</div>
+                    <div className="text-body-md font-body-md font-semibold text-primary">{destRain}</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
-                    <div className="text-label font-label text-secondary mb-0.5">Overnight Low</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">18°C</div>
+                    <div className="text-label font-label text-secondary mb-0.5">Humidity</div>
+                    <div className="text-body-md font-body-md font-semibold text-primary">{destHum !== '—' ? `${destHum}%` : '—'}</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Wind</div>
-                    <div className="text-body-md font-body-md font-semibold text-primary">8 km/h NW</div>
+                    <div className="text-body-md font-body-md font-semibold text-primary">{destWind !== '—' ? `${destWind} km/h` : '—'}</div>
                   </div>
                   <div className="p-2.5 bg-surface rounded-lg border border-border/60">
                     <div className="text-label font-label text-secondary mb-0.5">Air Quality (AQI)</div>
-                    <div className="text-body-md font-body-md font-semibold text-warning">142 (Moderate)</div>
+                    <div className="text-body-md font-body-md font-semibold text-secondary">Sensor unmonitored</div>
                   </div>
                 </div>
               </div>
 
               <div className="pt-3 border-t border-border/60 flex items-center gap-2 text-label font-label text-text-tertiary">
                 <span className="material-symbols-outlined text-[15px]">check_circle</span>
-                <span>Clear track conditions across final arrival corridor</span>
+                <span>Track conditions synced with arrival corridor</span>
               </div>
             </div>
 

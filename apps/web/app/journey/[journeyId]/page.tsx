@@ -97,9 +97,10 @@ export default function JourneyOverviewPage() {
     originDepDateStr ||
     (journeyId.includes('_') ? journeyId.split('_').pop() : '');
   const serviceDateFormatted = formatDate(serviceDateRaw) || 'Scheduled Run';
-  const isTrainRunning = journey?.run?.isLive && journey?.run?.status === 'running';
+  const statusUpper = (journey?.run?.status || '').toUpperCase();
+  const isTrainRunning = Boolean(journey?.run?.isLive && (statusUpper === 'RUNNING' || statusUpper === 'ON_TIME' || statusUpper === 'DELAYED'));
   const delayMinutes = journey?.run?.delayMinutes ?? 0;
-  const speed = Math.round(journey?.run?.currentLocation?.speedKph || 0);
+  const speed = Math.round(journey?.livePosition?.speedKph ?? journey?.run?.currentLocation?.speedKph ?? 0);
 
   const remainingKm = Math.round(progress?.remainingDistanceKm || 0);
   const remainingHours = Math.floor(remainingKm / 75);

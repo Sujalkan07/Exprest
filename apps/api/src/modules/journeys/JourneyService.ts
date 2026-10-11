@@ -38,40 +38,53 @@ export class JourneyService {
     }
 
     // --- Compute progress from the live stop statuses ---
-    // RailRadar live API gives status: 'departed' | 'at-station' | 'upcoming' per halt stop
     const stops = runData.stops;
     const totalStops = stops.length;
-    const totalDistanceKm = stops[totalStops - 1]?.distanceKm || 0;
+    const totalDistanceKm = totalStops > 0 ? (stops[totalStops - 1]?.distanceKm || 0) : 0;
 
-    // Count departed stops (strictly those that have status=departed)
+    // Count departed stops
     const departedCount = stops.filter((s: any) => s.status === 'departed').length;
     const atStationIdx = stops.findIndex((s: any) => s.status === 'at-station');
 
-    // The "current" stop is the at-station stop (or last departed if none at-station)
-    let currentStopIdx = atStationIdx !== -1 ? atStationIdx : Math.max(0, departedCount - 1);
-    
-    // The "next" stop is the first upcoming halt after the current
-    let nextStopIdx = stops.findIndex((s: any, i: number) => i > currentStopIdx && s.status === 'upcoming');
-    if (nextStopIdx === -1 && departedCount === totalStops) {
-      // Journey completed
-      nextStopIdx = totalStops - 1;
+    const statusUpper = (runData.liveStatus || runData.run?.status || '').toUpperCase();
+    const isCompleted = statusUpper === 'COMPLETED' || (totalStops > 0 && departedCount === totalStops);
+    const isNotStarted = statusUpper === 'NOT_STARTED' || (departedCount === 0 && atStationIdx === -1);
+
+    let currentStopIdx: number;
+    let nextStopIdx: number;
+    let coveredDistanceKm: number;
+    let progressPercent: number;
+
+    if (isCompleted) {
+      currentStopIdx = Math.max(0, totalStops - 1);
+      nextStopIdx = -1; // Completed journey: destination has no next station
+      coveredDistanceKm = totalDistanceKm;
+      progressPercent = 100;
+    } else if (isNotStarted) {
+      currentStopIdx = 0;
+      nextStopIdx = totalStops > 1 ? 1 : -1;
+      coveredDistanceKm = 0;
+      progressPercent = 0;
+    } else {
+      currentStopIdx = atStationIdx !== -1 ? atStationIdx : Math.max(0, departedCount - 1);
+      nextStopIdx = stops.findIndex((s: any, i: number) => i > currentStopIdx && s.status === 'upcoming');
+      if (nextStopIdx === -1 && currentStopIdx < totalStops - 1) {
+        nextStopIdx = currentStopIdx + 1;
+      }
+      const currentStop = stops[currentStopIdx];
+      coveredDistanceKm = currentStop?.distanceKm || 0;
+      progressPercent = totalDistanceKm > 0
+        ? Math.min(100, Math.round((coveredDistanceKm / totalDistanceKm) * 100))
+        : 0;
     }
 
-    // completedStations = number of stops train has already passed/departed
-    const completedStations = departedCount;
-
-    // Distance covered = distance of current at-station stop (or last departed)
-    const currentStop = stops[currentStopIdx];
-    const coveredDistanceKm = currentStop?.distanceKm || 0;
+    const completedStations = isCompleted ? totalStops : departedCount;
     const remainingDistanceKm = Math.max(0, totalDistanceKm - coveredDistanceKm);
-    const progressPercent = totalDistanceKm > 0
-      ? Math.min(100, Math.round((coveredDistanceKm / totalDistanceKm) * 100))
-      : 0;
+    const delayMinutes = runData.isLive ? (live?.delayMinutes || 0) : 0;
 
-    const delayMinutes = live?.delayMinutes || 0;
-
-    // Hydrate live lat/lng
-    let livePosition = live;
+    // Hydrate live lat/lng only if this is a verified live run
+    let livePosition: typeof live | null = runData.isLive ? live : null;
+    const currentStop = stops[currentStopIdx];
     if (livePosition && livePosition.latitude === 0 && livePosition.longitude === 0 && currentStop) {
       livePosition = {
         ...livePosition,
@@ -80,7 +93,7 @@ export class JourneyService {
       };
     }
 
-    const startDate = (runData.run as any)?.startDate || live?.startDate || (runData.run as any)?.serviceDate || serviceDate;
+    const startDate = (runData.run as any)?.startDate || (runData.run as any)?.serviceDate || serviceDate;
 
     return {
       journeyId,
@@ -89,7 +102,7 @@ export class JourneyService {
       run: {
         ...runData.run,
         startDate,
-        status: runData.liveStatus || live?.status || 'RUNNING',
+        status: runData.liveStatus || 'RUNNING',
         delayMinutes,
         isLive: runData.isLive,
       },
@@ -107,7 +120,7 @@ export class JourneyService {
         nextStopIdx,
       },
       freshness: {
-        observedAt: live?.observedAt || new Date().toISOString(),
+        observedAt: (runData.isLive && live?.observedAt) ? live.observedAt : new Date().toISOString(),
         receivedAt: new Date().toISOString(),
       },
     };
@@ -259,9 +272,9 @@ export class JourneyService {
     const runData = await this.railRadar.getRun(trainNumber, serviceDate);
     if (!runData) return [];
 
-    // Build bounding box from all halt stops
-    const lats = runData.stops.filter((s: any) => s.stationLat).map((s: any) => s.stationLat);
-    const lons = runData.stops.filter((s: any) => s.stationLon).map((s: any) => s.stationLon);
+    const validStops = runData.stops.filter((s: any) => typeof s.stationLat === 'number' && typeof s.stationLon === 'number');
+    const lats = validStops.map((s: any) => s.stationLat);
+    const lons = validStops.map((s: any) => s.stationLon);
 
     if (lats.length === 0) return [];
 
@@ -272,6 +285,7 @@ export class JourneyService {
       maxLon: Math.max(...lons),
     };
 
-    return this.poi.searchNearby(bbox, category);
+    const routePoints = validStops.map((s: any) => ({ latitude: s.stationLat, longitude: s.stationLon }));
+    return this.poi.searchNearby(bbox, category, routePoints);
   }
 }

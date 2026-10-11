@@ -15,6 +15,21 @@ const app = Fastify({
 });
 
 async function main() {
+  // Startup environment validation (Section 4)
+  if (!process.env.RAILRADAR_API_KEY) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'Configuration error: Missing required environment variable RAILRADAR_API_KEY. ' +
+        'Please configure RAILRADAR_API_KEY in your deployment environment.'
+      );
+    } else {
+      console.warn(
+        '[Config Warning] RAILRADAR_API_KEY is not set. Live train tracking calls to RailRadar will fail ' +
+        'until RAILRADAR_API_KEY is set in your .env file.'
+      );
+    }
+  }
+
   await app.register(cors, { origin: true });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
