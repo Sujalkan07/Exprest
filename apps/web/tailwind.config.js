@@ -92,6 +92,8 @@ module.exports = {
         "margin": "24px"
       },
       fontFamily: {
+        "sans": ["Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        "mono": ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
         "display-xl": ["Inter"],
         "display-lg": ["Inter"],
         "body-lg": ["Inter"],

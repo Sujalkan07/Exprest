@@ -11,6 +11,7 @@ const BASE_URL = 'https://railradar.in/api/v1';
 
 export class RailRadarAdapter implements TrainProvider {
   private apiKey = process.env.RAILRADAR_API_KEY!;
+  private trainCoordsCache = new Map<string, Map<string, { lat: number; lng: number }>>();
 
   private get headers() {
     const key = (process.env.RAILRADAR_API_KEY || '').trim().replace(/['"]/g, '');
@@ -30,6 +31,34 @@ export class RailRadarAdapter implements TrainProvider {
       return `http://api.scraperapi.com?api_key=${scraperKey}&url=${encodeURIComponent(targetUrl)}&keep_headers=true`;
     }
     return targetUrl;
+  }
+
+  private async getCoordsForTrain(trainNumber: string): Promise<Map<string, { lat: number; lng: number }>> {
+    const cached = this.trainCoordsCache.get(trainNumber);
+    if (cached && cached.size > 0) return cached;
+
+    try {
+      const res = await fetch(
+        this.buildUrl(`${BASE_URL}/trains/${trainNumber}`),
+        { headers: this.headers, signal: AbortSignal.timeout(10_000) }
+      );
+      if (res.ok) {
+        const json = await res.json();
+        const stopsRaw: any[] = json?.data?.route || json?.data?.stops || [];
+        const map = new Map<string, { lat: number; lng: number }>();
+        for (const s of stopsRaw) {
+          const code = s.station?.code || s.stationCode;
+          if (code && typeof s.station?.lat === 'number') {
+            map.set(code, { lat: s.station.lat, lng: s.station.lng });
+          }
+        }
+        this.trainCoordsCache.set(trainNumber, map);
+        return map;
+      }
+    } catch (err) {
+      console.warn(`RailRadar getCoordsForTrain error for ${trainNumber}:`, err);
+    }
+    return new Map();
   }
 
   async search(query: string): Promise<Train[]> {
@@ -160,10 +189,11 @@ export class RailRadarAdapter implements TrainProvider {
     const coordMap = new Map<string, { lat: number; lng: number }>();
     for (const s of staticRoute) {
       const code = s.station?.code || s.stationCode;
-      if (code && s.station?.lat) {
+      if (code && typeof s.station?.lat === 'number') {
         coordMap.set(code, { lat: s.station.lat, lng: s.station.lng });
       }
     }
+    this.trainCoordsCache.set(trainNumber, coordMap);
 
     // Extract real-time startDate from liveData or origin scheduled departure ISO string
     const originStopCandidate = (liveRoute.length > 0 ? liveRoute : staticRoute).find((s: any) => s.isHalt) || (liveRoute.length > 0 ? liveRoute[0] : staticRoute[0]);
@@ -173,14 +203,48 @@ export class RailRadarAdapter implements TrainProvider {
       : null;
     const liveStartDate = liveData?.startDate || originDateFromDep;
 
-    // If a service date was requested and does not match the active live run,
-    // do not falsely claim live tracking for an unrelated run.
-    const isDateMatching = !serviceDate || !liveStartDate || serviceDate === liveStartDate;
+    // For multi-day train runs in India (e.g. overnight Rajdhani running across dates):
+    // Determine the arrival date at the destination stop
+    const lastLiveStop = liveRoute.length > 0 ? liveRoute[liveRoute.length - 1] : null;
+    const destArrival = lastLiveStop?.scheduledArrival || lastLiveStop?.actualArrival;
+    const liveEndDate = (typeof destArrival === 'string' && destArrival.includes('T'))
+      ? destArrival.split('T')[0]
+      : liveStartDate;
+
+    const todayDate = new Date().toISOString().split('T')[0];
+    let isDateMatching = false;
+    if (!serviceDate) {
+      isDateMatching = true;
+    } else if (serviceDate === liveStartDate) {
+      isDateMatching = true;
+    } else if (liveData && (liveData.isLive !== false || liveData.status === 'running')) {
+      if (liveStartDate && liveEndDate && serviceDate >= liveStartDate && serviceDate <= liveEndDate) {
+        isDateMatching = true;
+      } else if (serviceDate === todayDate && (liveData.isLive !== false || liveData.status === 'running')) {
+        isDateMatching = true;
+      }
+    }
+
     const isLive = Boolean(liveData && liveData.isLive !== false && isDateMatching);
     const activeLiveData = isDateMatching ? liveData : null;
 
     // Use live route as authoritative only if it is for the matching live date
-    const authorRoute: any[] = (isLive && liveRoute.length > 0) ? liveRoute : staticRoute;
+    // Hydrate coordinates for each stop in authorRoute from coordMap
+    const baseRoute: any[] = (isLive && liveRoute.length > 0) ? liveRoute : staticRoute;
+    const authorRoute = baseRoute.map((s: any) => {
+      const code = s.stationCode || s.station?.code;
+      const coords = coordMap.get(code);
+      return {
+        ...s,
+        stationCode: code,
+        station: {
+          code,
+          name: s.stationName || s.station?.name || '',
+          lat: coords?.lat || s.station?.lat || 0,
+          lng: coords?.lng || s.station?.lng || 0,
+        },
+      };
+    });
 
     // All halt stops with live data merged
     const haltStops = authorRoute.filter((s: any) => s.isHalt);
@@ -190,7 +254,7 @@ export class RailRadarAdapter implements TrainProvider {
     const originStop = stopsToUse[0];
     const destStop = stopsToUse[stopsToUse.length - 1];
 
-    const actualStartDate = serviceDate || liveStartDate || new Date().toISOString().split('T')[0];
+    const actualStartDate = serviceDate || liveStartDate || todayDate;
 
     const train: Train = {
       id: `TRN_${trainNumber}`,
@@ -207,7 +271,6 @@ export class RailRadarAdapter implements TrainProvider {
       updatedAt: new Date().toISOString(),
     } as any;
 
-    const todayDate = new Date().toISOString().split('T')[0];
     let fallbackStatus: JourneyStatus = 'NO_LIVE_DATA';
     if (!isLive) {
       if (serviceDate && serviceDate < todayDate) {
@@ -228,11 +291,11 @@ export class RailRadarAdapter implements TrainProvider {
       id: `journey_${trainNumber}_${actualStartDate}`,
       trainId: train.id,
       serviceDate: actualStartDate,
-      startDate: actualStartDate,
+      startDate: liveStartDate || actualStartDate,
       originStationId: train.originStationId,
       destinationStationId: train.destinationStationId,
       status: liveStatus,
-      startedAt: `${actualStartDate}T00:00:00Z`,
+      startedAt: `${liveStartDate || actualStartDate}T00:00:00Z`,
       completedAt: liveStatus === 'COMPLETED' ? `${actualStartDate}T23:59:59Z` : null,
       observedAt: activeLiveData?.lastUpdatedAt || new Date().toISOString(),
       delayMinutes: isLive ? (activeLiveData?.delayMinutes || 0) : 0,
@@ -292,14 +355,25 @@ export class RailRadarAdapter implements TrainProvider {
       const currentLoc = d.currentLocation || {};
       const nextHalt = d.nextHalt || {};
 
-      // Hydrate coords from the route array
+      // Hydrate coords from the route array or from cached train coords
       const routeStop = (d.route || []).find((s: any) => s.stationCode === currentLoc.stationCode);
+      let lat = routeStop?.station?.lat || 0;
+      let lng = routeStop?.station?.lng || 0;
+
+      if ((lat === 0 && lng === 0) && currentLoc.stationCode) {
+        const coordsMap = await this.getCoordsForTrain(trainNumber);
+        const coords = coordsMap.get(currentLoc.stationCode);
+        if (coords) {
+          lat = coords.lat;
+          lng = coords.lng;
+        }
+      }
 
       const statusRaw = (d.status || currentLoc.status || 'RUNNING').toUpperCase();
 
       return {
-        latitude: routeStop?.station?.lat || 0,
-        longitude: routeStop?.station?.lng || 0,
+        latitude: lat,
+        longitude: lng,
         heading: 0,
         speedKph: currentLoc.speedKmh || d.speedKmh || 0,
         currentStationId: currentLoc.stationCode || '',

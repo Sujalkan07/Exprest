@@ -85,12 +85,22 @@ export class JourneyService {
     // Hydrate live lat/lng only if this is a verified live run
     let livePosition: typeof live | null = runData.isLive ? live : null;
     const currentStop = stops[currentStopIdx];
-    if (livePosition && livePosition.latitude === 0 && livePosition.longitude === 0 && currentStop) {
-      livePosition = {
-        ...livePosition,
-        latitude: currentStop.stationLat || 0,
-        longitude: currentStop.stationLon || 0,
-      };
+    if (livePosition && livePosition.latitude === 0 && livePosition.longitude === 0) {
+      const allStops = runData.allStops || [];
+      const matchStn = allStops.find((s: any) => (s.stationCode || s.station?.code) === livePosition?.currentStationId);
+      if (matchStn && matchStn.station?.lat) {
+        livePosition = {
+          ...livePosition,
+          latitude: matchStn.station.lat,
+          longitude: matchStn.station.lng,
+        };
+      } else if (currentStop) {
+        livePosition = {
+          ...livePosition,
+          latitude: currentStop.stationLat || 0,
+          longitude: currentStop.stationLon || 0,
+        };
+      }
     }
 
     const startDate = (runData.run as any)?.startDate || (runData.run as any)?.serviceDate || serviceDate;
@@ -139,10 +149,17 @@ export class JourneyService {
     }
 
     if (runData && live.latitude === 0 && live.longitude === 0) {
-      const currentStn = runData.stops.find((s: any) => s.stationId === live.currentStationId);
-      if (currentStn) {
-        live.latitude = currentStn.stationLat || 0;
-        live.longitude = currentStn.stationLon || 0;
+      const allStops = runData.allStops || [];
+      const matchStn = allStops.find((s: any) => (s.stationCode || s.station?.code) === live.currentStationId);
+      if (matchStn && matchStn.station?.lat) {
+        live.latitude = matchStn.station.lat;
+        live.longitude = matchStn.station.lng;
+      } else {
+        const currentStn = runData.stops.find((s: any) => s.stationId === live.currentStationId);
+        if (currentStn) {
+          live.latitude = currentStn.stationLat || 0;
+          live.longitude = currentStn.stationLon || 0;
+        }
       }
     }
 
