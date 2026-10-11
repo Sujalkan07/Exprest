@@ -124,7 +124,8 @@ function SearchBar({
     : ((data as any)?.data?.items || []);
 
   const handleSelect = (train: Train) => {
-    const today = new Date().toISOString().split('T')[0];
+    // Use IST date — not UTC; IST is UTC+5:30 so UTC date can differ around midnight
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
     const journeyId = `journey_${train.number}_${today}`;
     onSelect(train);
     setQuery('');
@@ -379,7 +380,8 @@ export default function HomePage() {
 
   // Called whenever any train is searched or selected
   const handleSearchSelect = (train: Train) => {
-    const today = new Date().toISOString().split('T')[0];
+    // IST date: Asia/Kolkata timezone prevents UTC midnight boundary skew
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
     const journeyId = `journey_${train.number}_${today}`;
 
     // 1. Update Recent Searches in state & localStorage
@@ -604,7 +606,7 @@ export default function HomePage() {
                           createdAt: '',
                           updatedAt: '',
                         });
-                        const today = new Date().toISOString().split('T')[0];
+                        const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
                         router.push(`/journey/journey_${item.number}_${today}`);
                       }}
                       className="group flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border hover:border-outline-variant bg-surface-container-lowest transition-colors text-[13px] whitespace-nowrap cursor-pointer"

@@ -38,7 +38,7 @@ export class OpenWeatherAdapter implements WeatherProvider {
         // Current weather endpoint does not provide precipitation probability; represent honestly
         rainProbabilityPct: hasRain ? 100 : null,
         description: data.weather?.[0]?.description ?? data.weather?.[0]?.main ?? '',
-        observedAt: new Date().toISOString(),
+        observedAt: typeof data.dt === 'number' ? new Date(data.dt * 1000).toISOString() : new Date().toISOString(),
       };
     } catch (err) {
       console.warn(`OpenWeather getCurrent error for (${lat}, ${lon}):`, err);
@@ -80,7 +80,7 @@ export class OpenWeatherAdapter implements WeatherProvider {
         rainProbabilityPct: popPct,
         precipitationChance: popPct,
         description: list.weather?.[0]?.description ?? list.weather?.[0]?.main ?? '',
-        observedAt: new Date().toISOString(),
+        observedAt: typeof list.dt === 'number' ? new Date(list.dt * 1000).toISOString() : new Date().toISOString(),
       };
     } catch (err) {
       console.warn(`OpenWeather getForecast error for (${lat}, ${lon}):`, err);

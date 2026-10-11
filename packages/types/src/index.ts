@@ -86,7 +86,7 @@ export interface LivePosition {
   delayMinutes?: number;
   status?: string;
   startDate?: string;
-  observedAt: string;
+  observedAt: string | null;
 }
 
 export interface JourneyProgress {

@@ -31,7 +31,8 @@ export default function SavedPage() {
     try { localStorage.setItem('exprest_recent_searches', JSON.stringify(updated)); } catch {}
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  // IST date: Asia/Kolkata timezone prevents UTC midnight boundary skew
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
   return (
     <div className="min-h-screen bg-bg text-text flex flex-col">

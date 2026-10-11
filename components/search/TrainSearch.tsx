@@ -34,7 +34,8 @@ export const TrainSearch: React.FC<TrainSearchProps> = ({ onSearchSelect }) => {
 
   const handleSelect = (train: Train) => {
     onSearchSelect?.(train);
-    const today = new Date().toISOString().split('T')[0];
+    // IST date: Asia/Kolkata timezone prevents UTC midnight boundary skew
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
     router.push(`/journey/journey_${train.number}_${today}`);
   };
 

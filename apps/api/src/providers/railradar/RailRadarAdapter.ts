@@ -211,7 +211,8 @@ export class RailRadarAdapter implements TrainProvider {
       ? destArrival.split('T')[0]
       : liveStartDate;
 
-    const todayDate = new Date().toISOString().split('T')[0];
+    // IST date: use Asia/Kolkata timezone — UTC date can differ around midnight IST
+    const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
     let isDateMatching = false;
     if (!serviceDate) {
       isDateMatching = true;
@@ -280,11 +281,20 @@ export class RailRadarAdapter implements TrainProvider {
       }
     }
 
-    const liveStatusRaw = (activeLiveData?.status || '').toUpperCase();
+    // Map raw provider status to canonical JourneyStatus — never default to RUNNING
+    // RailRadar returns lowercase: 'running', 'not-started' etc. — toUpperCase normalises them
+    // 'NOT-STARTED' (hyphen) → 'NOT-STARTED'.toUpperCase() which we also handle here
+    const liveStatusRaw = (activeLiveData?.status || '').toUpperCase().replace(/-/g, '_');
+    const KNOWN_LIVE_STATUSES: Record<string, JourneyStatus> = {
+      RUNNING: 'RUNNING',
+      ON_TIME: 'ON_TIME',
+      DELAYED: 'DELAYED',
+      COMPLETED: 'COMPLETED',
+      CANCELLED: 'CANCELLED',
+      NOT_STARTED: 'NOT_STARTED',
+    };
     const liveStatus: JourneyStatus = isLive
-      ? (liveStatusRaw === 'RUNNING' || liveStatusRaw === 'ON_TIME' || liveStatusRaw === 'DELAYED' || liveStatusRaw === 'COMPLETED' || liveStatusRaw === 'CANCELLED' || liveStatusRaw === 'NOT_STARTED'
-          ? liveStatusRaw as JourneyStatus
-          : 'RUNNING')
+      ? (KNOWN_LIVE_STATUSES[liveStatusRaw] ?? 'NO_LIVE_DATA')
       : fallbackStatus;
 
     const run: JourneyRun = {
@@ -297,7 +307,7 @@ export class RailRadarAdapter implements TrainProvider {
       status: liveStatus,
       startedAt: `${liveStartDate || actualStartDate}T00:00:00Z`,
       completedAt: liveStatus === 'COMPLETED' ? `${actualStartDate}T23:59:59Z` : null,
-      observedAt: activeLiveData?.lastUpdatedAt || new Date().toISOString(),
+      observedAt: activeLiveData?.lastUpdatedAt || null,
       delayMinutes: isLive ? (activeLiveData?.delayMinutes || 0) : 0,
     } as any;
 
@@ -369,7 +379,8 @@ export class RailRadarAdapter implements TrainProvider {
         }
       }
 
-      const statusRaw = (d.status || currentLoc.status || 'RUNNING').toUpperCase();
+      // Normalise provider status — RailRadar returns lowercase, hyphens in 'not-started'
+      const statusRaw = (d.status || currentLoc.status || '').toUpperCase().replace(/-/g, '_') || 'NO_LIVE_DATA';
 
       return {
         latitude: lat,
@@ -383,7 +394,7 @@ export class RailRadarAdapter implements TrainProvider {
         delayMinutes: d.delayMinutes ?? currentLoc.delayMinutes ?? 0,
         status: statusRaw,
         startDate: d.startDate || undefined,
-        observedAt: d.lastUpdatedAt || new Date().toISOString(),
+        observedAt: d.lastUpdatedAt || null,
       };
     } catch (err) {
       console.warn(`RailRadar getLivePosition error for ${trainNumber}:`, err);

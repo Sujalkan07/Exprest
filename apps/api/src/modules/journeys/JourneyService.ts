@@ -112,7 +112,7 @@ export class JourneyService {
       run: {
         ...runData.run,
         startDate,
-        status: runData.liveStatus || 'RUNNING',
+        status: runData.liveStatus || 'NO_LIVE_DATA',
         delayMinutes,
         isLive: runData.isLive,
       },
@@ -130,7 +130,8 @@ export class JourneyService {
         nextStopIdx,
       },
       freshness: {
-        observedAt: (runData.isLive && live?.observedAt) ? live.observedAt : new Date().toISOString(),
+        // observedAt is the time the provider last observed the train — null if not live
+        observedAt: (runData.isLive && live?.observedAt && !live.observedAt.startsWith('1970')) ? live.observedAt : null,
         receivedAt: new Date().toISOString(),
       },
     };
@@ -165,7 +166,7 @@ export class JourneyService {
 
     return {
       position: live,
-      status: live.status || 'RUNNING',
+      status: live.status || 'NO_LIVE_DATA',
       delayMinutes: live.delayMinutes,
       currentStationId: live.currentStationId,
       currentStationName: live.currentStationName,

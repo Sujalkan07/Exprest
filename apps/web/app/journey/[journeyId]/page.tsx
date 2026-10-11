@@ -103,8 +103,35 @@ export default function JourneyOverviewPage() {
   const speed = Math.round(journey?.livePosition?.speedKph ?? journey?.run?.currentLocation?.speedKph ?? 0);
 
   const remainingKm = Math.round(progress?.remainingDistanceKm || 0);
-  const remainingHours = Math.floor(remainingKm / 75);
-  const remainingMins = Math.round((remainingKm % 75) * 0.8);
+  // ETA: use scheduled/actual arrival at destination stop, not a fabricated 75 km/h estimate
+  const destArrivalTime = destStop?.actualArrival || destStop?.scheduledArrival;
+  const etaDisplay = (() => {
+    if (!destArrivalTime) return '—';
+    const arrDate = new Date(destArrivalTime);
+    if (isNaN(arrDate.getTime())) return '—';
+    const now = new Date();
+    const diffMs = arrDate.getTime() - now.getTime();
+    if (diffMs <= 0) return 'Arrived';
+    const diffMins = Math.round(diffMs / 60000);
+    const h = Math.floor(diffMins / 60);
+    const m = diffMins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  })();
+
+  const nextStopEta = (() => {
+    if (!nextStop) return 'Destination';
+    const arr = nextStop.actualArrival || nextStop.scheduledArrival;
+    if (!arr) return 'Approaching';
+    const d = new Date(arr);
+    if (isNaN(d.getTime())) return 'Approaching';
+    const now = new Date();
+    const diffMs = d.getTime() - now.getTime();
+    if (diffMs <= 0) return 'Arriving now';
+    const diffMins = Math.round(diffMs / 60000);
+    const h = Math.floor(diffMins / 60);
+    const m = diffMins % 60;
+    return `In approx. ${h > 0 ? `${h}h ${m}m` : `${m}m`}`;
+  })();
 
   if (isLoading) {
     return (
@@ -160,7 +187,7 @@ export default function JourneyOverviewPage() {
             </span>
             <span className="tabular-nums">{isTrainRunning ? 'Live Telemetry Synced' : `Next Scheduled Run: ${serviceDateFormatted}`}</span>
             <span className="text-outline-variant">•</span>
-            <span className="text-secondary">GPS: <strong className="text-on-surface font-semibold">100% Lock</strong></span>
+            <span className="text-secondary">GPS: <strong className="text-on-surface font-semibold">{isTrainRunning && journey?.livePosition?.latitude ? 'Fix Active' : 'Scheduled Track'}</strong></span>
           </div>
         </div>
 
@@ -181,11 +208,11 @@ export default function JourneyOverviewPage() {
                 {journey?.train?.number || 'Train'} {journey?.train?.name || ''}
               </h1>
               <div className="flex flex-wrap items-center gap-2 text-on-surface-variant font-body-sm text-body-sm">
-                <span>{journey?.train?.category || 'Mail / Express'}</span>
+                <span>{journey?.train?.category || journey?.train?.type || 'Express'}</span>
                 <span className="text-outline-variant">•</span>
-                <span>LHB Rake</span>
+                <span>Broad Gauge (1,676 mm)</span>
                 <span className="text-outline-variant">•</span>
-                <span>Electric WAP-7 High Horsepower</span>
+                <span>{stops.length} Scheduled Halts</span>
               </div>
               <div className="pt-1">
                 <div className="inline-flex items-center gap-2 px-3 py-1 bg-surface rounded-xl border border-border text-on-surface font-body-sm text-body-sm">
@@ -233,20 +260,20 @@ export default function JourneyOverviewPage() {
                   : 'ON TIME (0 min delay)'}
               </span>
               <span className="text-secondary font-label text-label">
-                {isTrainRunning ? 'Block Section: Clear (Signal Green)' : `Scheduled Departure: ${serviceDateFormatted}`}
+                {isTrainRunning ? (delayMinutes > 0 ? `Late by ${delayMinutes} min` : 'Running on Schedule') : `Scheduled Departure: ${serviceDateFormatted}`}
               </span>
             </div>
             <p className="text-on-surface font-body-md text-body-md font-medium">
               {isTrainRunning
                 ? delayMinutes > 0
-                  ? `Running delayed by +${delayMinutes} min · Recovering speed`
-                  : 'Maintaining scheduled timetable velocity · Clear block section ahead'
-                : `Train scheduled to start on ${serviceDateFormatted} from ${originStop?.stationName || 'Origin'}`}
+                  ? `Train is currently running with an observed delay of ${delayMinutes} minutes.`
+                  : 'Train is running on schedule based on real-time transponder data.'
+                : `Train scheduled to start on ${serviceDateFormatted} from ${originStop?.stationName || 'Origin'}.`}
             </p>
             <p className="text-on-surface-variant font-body-sm text-body-sm">
               {isTrainRunning
-                ? `Automated Block Signalling · Next interlocking: ${nextStop?.stationName || currentStop?.stationName || 'En route'} Yard Section 'B'`
-                : `Dispatch Checklist Verified · Next Origin Yard Handover on ${serviceDateFormatted}`}
+                ? `Next station: ${nextStop?.stationName || destStop?.stationName || 'Destination'} (${nextStop?.stationId || destStop?.stationId || '—'})`
+                : `Scheduled departure from ${originStop?.stationName || 'Origin'} (${originStop?.stationId || '—'})`}
             </p>
           </div>
 
@@ -263,23 +290,23 @@ export default function JourneyOverviewPage() {
           {/* Schedule Reliability (2.5 cols) */}
           <div className="md:col-span-2 bg-surface-elevated border border-border rounded-xl p-space-md flex flex-col justify-between">
             <div className="flex items-center justify-between font-label text-label text-secondary mb-2">
-              <span>SCHEDULE RELIABILITY</span>
+              <span>SCHEDULE STATUS</span>
             </div>
-            <div className={`font-heading-md text-heading-md font-bold ${delayMinutes <= 15 ? 'text-success' : 'text-warning'}`}>
-              {delayMinutes <= 15 ? '99.4%' : '88.2%'} On-time
+            <div className={`font-heading-md text-heading-md font-bold ${delayMinutes <= 0 ? 'text-success' : delayMinutes <= 15 ? 'text-warning' : 'text-error'}`}>
+              {delayMinutes <= 0 ? 'On Time' : `+${delayMinutes} min late`}
             </div>
             <div className="mt-2 space-y-1 border-t border-border pt-2">
               <div className="flex items-center justify-between text-body-sm">
-                <span className="text-secondary">Remaining ETA</span>
+                <span className="text-secondary">ETA to Dest.</span>
                 <span className="font-bold text-on-surface tabular-nums">
-                  {remainingHours > 0 ? `${remainingHours}h ${remainingMins}m` : `${remainingMins}m`}
+                  {etaDisplay}
                 </span>
               </div>
               <div className="flex items-center justify-between text-body-sm">
-                <span className="text-secondary">Next Signal</span>
+                <span className="text-secondary">Tracking Status</span>
                 <span className={`font-bold flex items-center gap-1 ${isTrainRunning ? 'text-success' : 'text-info'}`}>
                   <span className={`h-2 w-2 rounded-full ${isTrainRunning ? 'bg-success' : 'bg-info'}`}></span>
-                  {isTrainRunning ? 'GREEN' : 'READY'}
+                  {isTrainRunning ? 'LIVE GPS' : 'TIMETABLE'}
                 </span>
               </div>
               <div className="flex items-center justify-between text-body-sm">
@@ -318,7 +345,7 @@ export default function JourneyOverviewPage() {
               <div className="text-on-surface-variant font-body-sm text-body-sm flex items-center gap-2 mt-1">
                 <span className="font-medium text-on-surface">Platform {originStop?.platform || 1}</span>
                 <span className="text-outline-variant">•</span>
-                <span>Speed on clearing: <strong className="tabular-nums text-on-surface">{isTrainRunning ? '42 km/h' : '0 km/h'}</strong></span>
+                <span>Halt: <strong className="tabular-nums text-on-surface">{originStop?.haltMinutes ? `${originStop.haltMinutes} min` : 'Origin Station'}</strong></span>
               </div>
             </div>
             <div className="bg-surface rounded-xl p-3 border border-border space-y-2">
@@ -335,17 +362,15 @@ export default function JourneyOverviewPage() {
                 <span className="text-on-surface-variant tabular-nums">{formatTime(originStop?.scheduledDeparture)} (Sch)</span>
               </div>
               <div className="flex justify-between items-center text-body-sm font-body-sm">
-                <span className="text-secondary">Yard Handover:</span>
-                <span className="text-success font-medium">
-                  {isTrainRunning
-                    ? `${originStop?.stationId || journey?.train?.originStationId || 'Yard'} Yard Clearing OK`
-                    : `Pending ${originStop?.stationId || journey?.train?.originStationId || 'Yard'} Yard Dispatch (${serviceDateFormatted})`}
+                <span className="text-secondary">Departure Status:</span>
+                <span className={isTrainRunning ? "text-success font-medium" : "text-secondary font-medium"}>
+                  {isTrainRunning ? 'Departed' : `Scheduled for ${serviceDateFormatted}`}
                 </span>
               </div>
             </div>
             <div className="text-on-surface-variant font-body-sm text-body-sm flex items-center gap-1.5">
               <span className="material-symbols-outlined text-sm">check_circle</span>
-              <span>{isTrainRunning ? 'Station departure checklist verified & telemetry locked' : `Next run scheduled for ${serviceDateFormatted} & telemetry ready`}</span>
+              <span>{isTrainRunning ? 'Live timetable and tracking synchronized' : `Scheduled timetable loaded for ${serviceDateFormatted}`}</span>
             </div>
           </div>
 
@@ -358,7 +383,7 @@ export default function JourneyOverviewPage() {
                 {isTrainRunning ? 'APPROACHING NEXT' : 'NEXT SCHEDULED STOP'}
               </span>
               <span className="text-info font-body-sm text-body-sm font-medium tabular-nums">
-                {nextStop ? 'In approx. 1h 18m' : 'Destination'}
+                {nextStop ? nextStopEta : 'Destination'}
               </span>
             </div>
             <div>
@@ -390,15 +415,15 @@ export default function JourneyOverviewPage() {
                 <span className="text-on-surface-variant tabular-nums">{formatTime(nextStop?.scheduledArrival)} (Sch)</span>
               </div>
               <div className="flex justify-between items-center text-body-sm font-body-sm">
-                <span className="text-secondary">Intermediate Crossing:</span>
+                <span className="text-secondary">Halt Duration:</span>
                 <span className="text-on-surface font-medium">
-                  Passing {nextStop?.stationName || 'en route'} on schedule
+                  {nextStop?.haltMinutes ? `${nextStop.haltMinutes} mins scheduled halt` : 'Scheduled Passenger Halt'}
                 </span>
               </div>
             </div>
             <div className="text-info font-body-sm text-body-sm flex items-center gap-1.5">
               <span className="material-symbols-outlined text-sm">route</span>
-              <span>Line speed permitted: 130 km/h · No speed restrictions active</span>
+              <span>{isTrainRunning ? `Operational speed: ${speed} km/h` : 'Timetable operational route'}</span>
             </div>
           </div>
         </div>
@@ -416,7 +441,7 @@ export default function JourneyOverviewPage() {
               </span>
               <span className="text-secondary font-body-sm text-body-sm tabular-nums">
                 {isTrainRunning
-                  ? `Elapsed: ${Math.floor((progress?.coveredDistanceKm || 0) / 75)}h ${Math.round(((progress?.coveredDistanceKm || 0) % 75) * 0.8)}m / Total: ${Math.round((progress?.totalDistanceKm || 0) / 75)}h ${Math.round(((progress?.totalDistanceKm || 0) % 75) * 0.8)}m`
+                  ? `${progress?.percent ?? 0}% of route covered · ${remainingKm} km to go`
                   : `Next Departure: ${serviceDateFormatted}`}
               </span>
             </div>
@@ -467,9 +492,9 @@ export default function JourneyOverviewPage() {
               <span className="text-secondary font-body-sm text-body-sm">Broad Gauge Dual Track</span>
             </div>
             <div className="bg-surface rounded-xl p-3 border border-border">
-              <span className="text-secondary font-label text-label block uppercase tracking-wider">Elapsed vs ETA</span>
+              <span className="text-secondary font-label text-label block uppercase tracking-wider">Scheduled ETA</span>
               <span className="font-bold text-on-surface text-[28px] leading-tight tabular-nums">
-                {remainingHours > 0 ? `${remainingHours}h ${remainingMins}m` : `${remainingMins}m`}
+                {etaDisplay}
               </span>
               <span className={`font-body-sm text-body-sm font-semibold ${isTrainRunning && delayMinutes <= 5 ? 'text-success' : isTrainRunning ? 'text-warning' : 'text-info'}`}>
                 {isTrainRunning ? (delayMinutes <= 5 ? 'Running on scheduled slot' : `Delayed by ${delayMinutes} min`) : `Departs ${serviceDateFormatted}`}
@@ -544,14 +569,14 @@ export default function JourneyOverviewPage() {
             {/* Bottom HUD */}
             <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2 bg-[#0d1117]/80 backdrop-blur-sm border-t border-white/10">
               <span className="font-body-sm text-body-sm text-[#94a3b8]">
-                Next Interlocking: <span className="font-semibold text-white">{nextStop?.stationId || '—'}-Yard-B</span>
+                Next Halt: <span className="font-semibold text-white">{nextStop?.stationName || '—'} ({nextStop?.stationId || '—'})</span>
               </span>
               <span className="font-body-sm text-body-sm text-[#94a3b8]">
-                Speed Limit: <span className="font-semibold text-white">130 km/h</span>
+                Current Velocity: <span className="font-semibold text-white">{isTrainRunning ? `${speed} km/h` : '0 km/h'}</span>
               </span>
-              <span className="flex items-center gap-1.5 font-body-sm text-body-sm text-success">
-                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse"></span>
-                Direct CTC Feed Connected
+              <span className={`flex items-center gap-1.5 font-body-sm text-body-sm ${isTrainRunning ? 'text-success' : 'text-slate-400'}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${isTrainRunning ? 'bg-success animate-pulse' : 'bg-slate-500'}`}></span>
+                {isTrainRunning ? 'Live Radar Tracking' : 'Timetable View'}
               </span>
             </div>
           </div>

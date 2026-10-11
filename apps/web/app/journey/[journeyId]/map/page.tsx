@@ -35,12 +35,6 @@ function getETA(isoString: string | null | undefined, delayMinutes: number = 0):
   } catch { return '—'; }
 }
 
-function getPseudoRandom(seed: string) {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i) | 0;
-  return Math.abs(hash);
-}
-
 export default function ImmersiveMapPage() {
   const params = useParams();
   const journeyId = params.journeyId as string;
@@ -65,24 +59,12 @@ export default function ImmersiveMapPage() {
   const nextStopIdx = journey?.progress?.nextStopIdx ?? 1;
   const currentStop = journey?.stops?.[currentStopIdx];
   const nextStop = journey?.stops?.[nextStopIdx];
+  const originStop = journey?.stops?.[0];
 
   const delayMinutes = journey?.run?.delayMinutes ?? 0;
   const speedKph = Math.round(journey?.livePosition?.speedKph || 0);
   const runStatus = journey?.run?.status || 'not-started';
   const isLive = journey?.run?.isLive || false;
-
-  // Deterministic telemetry (RailRadar doesn't supply these — we derive them consistently)
-  const rand = getPseudoRandom(journey?.train?.number || '12345');
-  const psr = [100, 110, 120, 130][rand % 4];
-  const catenaryV = (24.5 + (rand % 12) * 0.1).toFixed(1);
-  const locoTypes = ['WAP-7', 'WAP-5', 'WAG-9', 'WDP-4D'];
-  const sheds = ['LGD', 'GZB', 'BRC', 'RPM', 'KYN'];
-  const locoNo = 30000 + (rand % 9000);
-  const locoType = locoTypes[rand % locoTypes.length];
-  const shed = sheds[rand % sheds.length];
-  const gradients = ['1 in 150 (Rising)', '1 in 200 (Level / Falling)', '1 in 100 (Steep)', 'Level Track'];
-  const gradientText = gradients[rand % gradients.length];
-  const blockSuffix = ['A', 'B', 'X', 'Y'][rand % 4];
 
   // Calculate elapsed time
   const depTime = journey?.stops?.[0]?.scheduledDeparture;
@@ -293,25 +275,25 @@ export default function ImmersiveMapPage() {
               </div>
             </div>
 
-            {/* Speed & Block Status */}
+            {/* Speed & Section Status */}
             <div className="grid grid-cols-2 gap-2 mt-4 p-2.5 bg-surface rounded-xl border border-border">
               <div>
                 <span className="font-label text-label text-secondary uppercase block">Current Velocity</span>
                 <span className="font-heading-md text-heading-md font-bold text-on-surface tabular-nums">
-                  {speedKph} <span className="font-body-sm text-body-sm text-secondary font-normal">km/h</span>
+                  {isLive ? speedKph : 0} <span className="font-body-sm text-body-sm text-secondary font-normal">km/h</span>
                 </span>
               </div>
               <div>
-                <span className="font-label text-label text-secondary uppercase block">Permissible Limit</span>
+                <span className="font-label text-label text-secondary uppercase block">Speed Limit</span>
                 <span className="font-heading-md text-heading-md font-bold text-secondary tabular-nums">
-                  {psr} <span className="font-body-sm text-body-sm text-secondary font-normal">km/h</span>
+                  130 <span className="font-body-sm text-body-sm text-secondary font-normal">km/h (MPS)</span>
                 </span>
               </div>
               <div className="col-span-2 pt-1 border-t border-border flex items-center justify-between">
-                <span className="font-label text-label text-secondary">Block Section Status</span>
-                <span className="inline-flex items-center space-x-1.5 font-label text-label font-bold text-success">
-                  <span className="w-2 h-2 rounded-full bg-success"></span>
-                  <span>Signal Green (Automatic)</span>
+                <span className="font-label text-label text-secondary">Tracking Status</span>
+                <span className={`inline-flex items-center space-x-1.5 font-label text-label font-bold ${isLive ? 'text-success' : 'text-secondary'}`}>
+                  <span className={`w-2 h-2 rounded-full ${isLive ? 'bg-success animate-pulse' : 'bg-slate-400'}`}></span>
+                  <span>{isLive ? 'Live GPS Tracking' : 'Timetable View'}</span>
                 </span>
               </div>
             </div>
@@ -433,27 +415,29 @@ export default function ImmersiveMapPage() {
       {/* ===== BOTTOM TELEMETRY BAR ===== */}
       <footer className="bg-[#0f1923]/95 backdrop-blur-sm border-t border-[#1e2d3d] shadow-[0_-4px_20px_rgba(0,0,0,0.4)] px-space-lg py-3 flex items-center justify-between text-[#e2e8f0] flex-shrink-0 z-10">
 
-        {/* Signal & Interlocking */}
+        {/* Journey Corridor & Status */}
         <div className="flex items-center space-x-space-md border-r border-[#2d3748] pr-space-lg">
           <div className="flex items-center space-x-2.5">
             <div className="relative flex items-center justify-center">
-              <span className="w-3.5 h-3.5 rounded-full bg-[#10b981] shadow-[0_0_12px_#10b981]"></span>
-              <span className="absolute w-5 h-5 rounded-full border border-[#10b981]/60 animate-ping"></span>
+              <span className={`w-3.5 h-3.5 rounded-full ${isLive ? (delayMinutes > 0 ? 'bg-amber-400' : 'bg-[#10b981]') : 'bg-slate-500'}`}></span>
+              {isLive && <span className="absolute w-5 h-5 rounded-full border border-[#10b981]/60 animate-ping"></span>}
             </div>
             <div>
               <div className="flex items-center space-x-1.5">
-                <span className="font-label text-label uppercase text-[#94a3b8] font-bold">Signal Aspect</span>
-                <span className="px-1.5 bg-[#10b981]/20 text-[#34d399] rounded font-label text-label font-bold">PROCEED CLEAR</span>
+                <span className="font-label text-label uppercase text-[#94a3b8] font-bold">Status</span>
+                <span className={`px-1.5 rounded font-label text-label font-bold ${isLive ? (delayMinutes > 0 ? 'bg-amber-400/20 text-amber-400' : 'bg-[#10b981]/20 text-[#34d399]') : 'bg-slate-700 text-slate-300'}`}>
+                  {isLive ? (delayMinutes > 0 ? `DELAYED (+${delayMinutes}m)` : 'ON TIME') : runStatus.toUpperCase().replace(/_/g, ' ')}
+                </span>
               </div>
               <p className="font-body-sm text-body-sm text-white font-medium">
-                Block Section #{journey?.train?.number || '0'}-{blockSuffix}
+                {currentStop?.stationId || originStop?.stationId || 'Origin'} → {nextStop?.stationId || 'Destination'}
               </p>
             </div>
           </div>
           <div className="hidden md:block">
-            <span className="font-label text-label uppercase text-[#94a3b8] block">Next Interlocking</span>
+            <span className="font-label text-label uppercase text-[#94a3b8] block">Next Station</span>
             <p className="font-body-sm text-body-sm text-white font-medium">
-              {nextStop?.stationId || '—'}-Yard-B Junction · {psr} km/h PSR
+              {nextStop?.stationName || '—'} ({nextStop?.stationId || '—'})
             </p>
           </div>
         </div>
@@ -461,26 +445,26 @@ export default function ImmersiveMapPage() {
         {/* Real-time telemetry */}
         <div className="hidden lg:flex items-center space-x-space-lg px-space-md">
           <div>
-            <span className="font-label text-label uppercase text-[#94a3b8] block">Line Gradient</span>
+            <span className="font-label text-label uppercase text-[#94a3b8] block">Track Gauge</span>
             <div className="flex items-center space-x-1 text-white font-body-sm text-body-sm font-semibold">
-              <span className="material-symbols-outlined text-[15px] text-[#38bdf8]">trending_flat</span>
-              <span>{gradientText}</span>
+              <span className="material-symbols-outlined text-[15px] text-[#38bdf8]">linear_scale</span>
+              <span>1,676 mm (Broad)</span>
             </div>
           </div>
           <div>
-            <span className="font-label text-label uppercase text-[#94a3b8] block">Overhead Catenary</span>
+            <span className="font-label text-label uppercase text-[#94a3b8] block">Route Total</span>
             <div className="flex items-center space-x-1 text-white font-body-sm text-body-sm font-semibold">
-              <span className="material-symbols-outlined text-[15px] text-amber-400">bolt</span>
-              <span>{catenaryV} kV AC</span>
+              <span className="material-symbols-outlined text-[15px] text-amber-400">route</span>
+              <span>{Math.round(totalDist)} km</span>
             </div>
           </div>
           <div>
-            <span className="font-label text-label uppercase text-[#94a3b8] block">Traction Unit</span>
-            <span className="text-white font-body-sm text-body-sm font-semibold">{locoType} #{locoNo} ({shed})</span>
+            <span className="font-label text-label uppercase text-[#94a3b8] block">Train Type</span>
+            <span className="text-white font-body-sm text-body-sm font-semibold">{journey?.train?.category || journey?.train?.type || 'Express'}</span>
           </div>
           <div>
             <span className="font-label text-label uppercase text-[#94a3b8] block">Live Speed</span>
-            <span className="text-white font-body-sm text-body-sm font-semibold tabular-nums">{speedKph} km/h</span>
+            <span className="text-white font-body-sm text-body-sm font-semibold tabular-nums">{isLive ? `${speedKph} km/h` : '—'}</span>
           </div>
           <div>
             <span className="font-label text-label uppercase text-[#94a3b8] block">Delay</span>
