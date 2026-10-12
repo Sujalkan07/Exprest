@@ -149,20 +149,11 @@ export default function JourneyOverviewPage() {
     );
   }
 
-  // Coach composition — derive from train data or use sensible default
-  const coaches: Array<{ label: string; type: string; capacity?: number }> =
-    journey?.train?.coaches || [
-      { label: 'ENG', type: 'Engine' },
-      { label: 'EOG', type: 'EOG' },
-      { label: 'H1', type: '1AC' },
-      { label: 'A1', type: '2AC' },
-      { label: 'A2', type: '2AC' },
-      { label: 'PC', type: 'Pantry' },
-      { label: 'B1', type: '3AC' },
-      { label: 'B2', type: '3AC' },
-      { label: 'B3', type: '3AC' },
-      { label: 'EOG', type: 'EOG' },
-    ];
+  // Coach composition — only use if reported by provider, never fabricate
+  const hasReportedCoaches = Array.isArray(journey?.train?.coaches) && journey.train.coaches.length > 0;
+  const coaches: Array<{ label: string; type: string; capacity?: number }> = hasReportedCoaches
+    ? journey.train.coaches
+    : [];
 
   return (
     <>
@@ -512,27 +503,38 @@ export default function JourneyOverviewPage() {
               <div>
                 <h3 className="font-heading-md text-heading-md text-on-surface font-semibold">Coach Composition</h3>
                 <p className="text-secondary font-body-sm text-body-sm mt-0.5">
-                  {coaches.length} COACHES LHB
+                  {hasReportedCoaches ? `${coaches.length} Coaches` : 'Standard Rake / Composition not reported'}
                 </p>
               </div>
-              <span className="text-secondary font-body-sm text-body-sm">Physical orientation: Engine leading towards {journey?.train?.destinationStationName || 'Destination'}</span>
+              {hasReportedCoaches && (
+                <span className="text-secondary font-body-sm text-body-sm">
+                  Physical orientation: Engine leading towards {journey?.train?.destinationStationName || 'Destination'}
+                </span>
+              )}
             </div>
 
             {/* Coach row */}
-            <div className="flex flex-wrap gap-1.5 overflow-x-auto pb-2">
-              {coaches.map((coach, i) => (
-                <div key={i} className={`flex flex-col items-center min-w-[46px] px-1.5 py-2 rounded-lg border text-center transition-colors ${coach.label === 'ENG' ? 'bg-primary/10 border-primary/30' : coach.label === 'EOG' ? 'bg-surface border-border' : 'bg-surface-elevated border-border hover:border-primary/30 cursor-pointer'}`}>
-                  <span className={`font-heading-sm text-heading-sm font-bold ${coach.label === 'ENG' ? 'text-primary' : 'text-on-surface'}`}>
-                    {coach.label}
-                  </span>
-                  <span className="font-label text-label text-secondary mt-0.5">{coach.type}</span>
-                </div>
-              ))}
-            </div>
+            {hasReportedCoaches ? (
+              <div className="flex flex-wrap gap-1.5 overflow-x-auto pb-2">
+                {coaches.map((coach, i) => (
+                  <div key={i} className={`flex flex-col items-center min-w-[46px] px-1.5 py-2 rounded-lg border text-center transition-colors ${coach.label === 'ENG' ? 'bg-primary/10 border-primary/30' : coach.label === 'EOG' ? 'bg-surface border-border' : 'bg-surface-elevated border-border hover:border-primary/30 cursor-pointer'}`}>
+                    <span className={`font-heading-sm text-heading-sm font-bold ${coach.label === 'ENG' ? 'text-primary' : 'text-on-surface'}`}>
+                      {coach.label}
+                    </span>
+                    <span className="font-label text-label text-secondary mt-0.5">{coach.type}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 rounded-lg bg-surface border border-dashed border-border text-center text-body-sm font-body-sm text-secondary">
+                <span className="material-symbols-outlined text-[24px] text-outline mb-1">directions_railway</span>
+                <p>Granular coach positioning is not reported for this service by the provider.</p>
+              </div>
+            )}
 
             <div className="pt-2 border-t border-border text-body-sm font-body-sm text-on-surface-variant">
               <span className="font-medium text-on-surface">Catering Facility:</span>{' '}
-              Standard IRCTC Meals Included
+              {journey?.train?.catering || 'Standard IRCTC Pantry / Onboard Catering Subject to Train Category'}
             </div>
           </div>
 

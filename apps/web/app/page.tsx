@@ -35,7 +35,9 @@ export interface FavoriteTrainItem {
   journeyId: string;
 }
 
-// Initial fallback favorites shown if user has not searched any trains yet
+// Initial fallback popular trains shown if user has not searched any trains yet
+const getTodayIst = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+
 const DEFAULT_FAVORITE_TRAINS: FavoriteTrainItem[] = [
   {
     number: '12951',
@@ -44,13 +46,13 @@ const DEFAULT_FAVORITE_TRAINS: FavoriteTrainItem[] = [
     from: 'NDLS',
     to: 'MMCT',
     status: 'on-time',
-    statusLabel: 'On Time',
-    sector: 'Vadodara Jn',
-    speed: '128 km/h',
-    platform: 'PF 3',
-    eta: '08:32 AM',
-    progress: 72,
-    journeyId: 'journey_12951_2026-10-12',
+    statusLabel: 'Scheduled Service',
+    sector: 'NDLS → MMCT Corridor',
+    speed: 'Max 130 km/h',
+    platform: 'Track Live for PF',
+    eta: '16h 05m journey',
+    progress: 0,
+    journeyId: `journey_12951_${getTodayIst()}`,
   },
   {
     number: '22436',
@@ -58,14 +60,14 @@ const DEFAULT_FAVORITE_TRAINS: FavoriteTrainItem[] = [
     type: 'Semi-High Speed',
     from: 'NDLS',
     to: 'BSB',
-    status: 'delayed',
-    statusLabel: '+3 min delay',
-    sector: 'Kanpur (12 km)',
-    speed: '130 km/h',
-    platform: 'PF 1',
-    eta: '14:00 PM',
-    progress: 48,
-    journeyId: 'journey_22436_2026-10-12',
+    status: 'on-time',
+    statusLabel: 'Scheduled Service',
+    sector: 'NDLS → BSB Corridor',
+    speed: 'Max 130 km/h',
+    platform: 'Track Live for PF',
+    eta: '8h 00m journey',
+    progress: 0,
+    journeyId: `journey_22436_${getTodayIst()}`,
   },
   {
     number: '12004',
@@ -74,13 +76,13 @@ const DEFAULT_FAVORITE_TRAINS: FavoriteTrainItem[] = [
     from: 'NDLS',
     to: 'LKO',
     status: 'boarding',
-    statusLabel: 'Boarding Open',
-    sector: 'New Delhi (NDLS)',
-    speed: '0 km/h (Station)',
-    platform: 'PF 4',
-    eta: '06:10 AM',
-    progress: 6,
-    journeyId: 'journey_12004_2026-10-12',
+    statusLabel: 'Scheduled Service',
+    sector: 'NDLS → LKO Corridor',
+    speed: 'Max 130 km/h',
+    platform: 'Track Live for PF',
+    eta: '6h 35m journey',
+    progress: 0,
+    journeyId: `journey_12004_${getTodayIst()}`,
   },
 ];
 
@@ -137,20 +139,12 @@ function SearchBar({
       handleSelect(trains[0]);
     } else if (query.trim()) {
       const q = query.trim();
-      const customTrain: Train = {
-        id: `TRN_${q}`,
-        number: q,
-        name: /^\d+$/.test(q) ? `Express ${q}` : q,
-        originStationId: 'NDLS',
-        destinationStationId: 'DEST',
-        type: q.startsWith('22') ? 'Vande Bharat' : q.startsWith('12') ? 'Superfast' : 'Express',
-        sourceProvider: 'User',
-        providerTrainId: q,
-        routeVersion: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      handleSelect(customTrain);
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+      // If query is a numeric train number (4-5 digits), navigate directly to that journey
+      if (/^\d{4,5}$/.test(q)) {
+        setQuery('');
+        router.push(`/journey/journey_${q}_${today}`);
+      }
     }
   };
 
@@ -199,7 +193,7 @@ function SearchBar({
       <div className="flex items-center justify-between text-[11px] text-text-tertiary mt-2 px-1">
         <span className="flex items-center gap-1">
           <span className="material-symbols-outlined text-[13px]">my_location</span>
-          GPS telemetry refreshed at 500ms intervals
+          Real-time telemetry synced via RailRadar
         </span>
         <span>Press Enter ↵ to lock route</span>
       </div>
@@ -412,12 +406,12 @@ export default function HomePage() {
       from: fromCode,
       to: toCode,
       status: 'on-time',
-      statusLabel: 'Live Tracking',
-      sector: (train as any).originStationName ? `${(train as any).originStationName} Sector` : 'IR Live Grid',
-      speed: '118 km/h',
-      platform: 'PF 1',
-      eta: 'En Route',
-      progress: 35,
+      statusLabel: 'Tracked Train',
+      sector: (train as any).originStationName ? `${(train as any).originStationName} Corridor` : 'Rail Corridor',
+      speed: 'Track Live for Speed',
+      platform: 'Track Live for PF',
+      eta: 'Click to View',
+      progress: 0,
       journeyId,
     };
 
@@ -585,10 +579,10 @@ export default function HomePage() {
                 /* Default suggested recent items */
                 <div className="flex flex-wrap gap-2 py-1">
                   {[
-                    { number: '12951', name: 'Mumbai Tejas Rajdhani', status: 'On time', color: 'text-success', dot: 'bg-success' },
-                    { number: '22436', name: 'Vande Bharat Express', status: '+3m', color: 'text-secondary', dot: 'bg-secondary' },
-                    { number: '12301', name: 'Howrah Rajdhani', status: 'On time', color: 'text-success', dot: 'bg-success' },
-                    { number: '12626', name: 'Kerala Express', status: '+18m delay', color: 'text-warning', dot: 'bg-warning' },
+                    { number: '12951', name: 'Mumbai Tejas Rajdhani', from: 'NDLS', to: 'MMCT', status: 'Scheduled', color: 'text-success', dot: 'bg-success' },
+                    { number: '22436', name: 'Vande Bharat Express', from: 'NDLS', to: 'BSB', status: 'Scheduled', color: 'text-success', dot: 'bg-success' },
+                    { number: '12301', name: 'Howrah Rajdhani', from: 'HWH', to: 'NDLS', status: 'Scheduled', color: 'text-success', dot: 'bg-success' },
+                    { number: '12626', name: 'Kerala Express', from: 'NDLS', to: 'TVC', status: 'Scheduled', color: 'text-success', dot: 'bg-success' },
                   ].map((item) => (
                     <button
                       key={item.number}
@@ -597,10 +591,10 @@ export default function HomePage() {
                           id: `TRN_${item.number}`,
                           number: item.number,
                           name: item.name,
-                          originStationId: 'NDLS',
-                          destinationStationId: 'DEST',
+                          originStationId: item.from,
+                          destinationStationId: item.to,
                           type: 'Superfast',
-                          sourceProvider: 'User',
+                          sourceProvider: 'System',
                           providerTrainId: item.number,
                           routeVersion: null,
                           createdAt: '',

@@ -187,22 +187,38 @@ export class JourneyService {
 
     const live = await this.railRadar.getLivePosition(trainNumber);
 
-    // Get elevation profile from halt stations that have coordinates
-    const haltCoords = runData.stops
-      .filter((s: any) => s.stationLat && s.stationLon)
-      .map((s: any) => ({ latitude: s.stationLat, longitude: s.stationLon }));
+    // Get elevation profile from halt stations that have valid coordinates
+    const validStops = runData.stops.filter((s: any) =>
+      typeof s.stationLat === 'number' && typeof s.stationLon === 'number' &&
+      isFinite(s.stationLat) && isFinite(s.stationLon) &&
+      s.stationLat >= -90 && s.stationLat <= 90 &&
+      s.stationLon >= -180 && s.stationLon <= 180
+    );
+
+    const haltCoords = validStops.map((s: any) => ({
+      latitude: s.stationLat,
+      longitude: s.stationLon,
+    }));
 
     const elevationProfile = haltCoords.length >= 2
       ? await this.terrain.getElevationProfile(haltCoords)
       : [];
 
-    // Map elevation profile to distance-based format
-    const profileWithDistance = elevationProfile.map((ep: any, i: number) => ({
-      distanceKm: runData.stops[i]?.distanceKm || i * 100,
-      elevationM: ep.elevationM || ep.elevation || 0,
-      stationCode: runData.stops[i]?.stationId || '',
-      stationName: runData.stops[i]?.stationName || '',
-    }));
+    // Map elevation profile to distance-based format matching actual station points
+    const profileWithDistance = elevationProfile.map((ep: any) => {
+      const matchStop = validStops.find((s: any) =>
+        Math.abs(s.stationLat - ep.latitude) < 0.005 &&
+        Math.abs(s.stationLon - ep.longitude) < 0.005
+      );
+      return {
+        distanceKm: matchStop?.distanceKm ?? ep.distanceKm,
+        elevationM: ep.elevationM,
+        latitude: ep.latitude,
+        longitude: ep.longitude,
+        stationCode: matchStop?.stationId || '',
+        stationName: matchStop?.stationName || '',
+      };
+    });
 
     const totalDistanceKm = runData.stops[runData.stops.length - 1]?.distanceKm || 0;
     const delayMinutes = live?.delayMinutes || 0;

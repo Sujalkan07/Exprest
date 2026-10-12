@@ -35,8 +35,8 @@ export class OpenWeatherAdapter implements WeatherProvider {
         windSpeedKph: typeof data.wind?.speed === 'number' ? Math.round(data.wind.speed * 3.6) : null,
         windKph: typeof data.wind?.speed === 'number' ? Math.round(data.wind.speed * 3.6) : null,
         cloudCoverPct: data.clouds?.all ?? null,
-        // Current weather endpoint does not provide precipitation probability; represent honestly
-        rainProbabilityPct: hasRain ? 100 : null,
+        // Current weather endpoint reports actual conditions rather than probability; represent probability honestly as null
+        rainProbabilityPct: null,
         description: data.weather?.[0]?.description ?? data.weather?.[0]?.main ?? '',
         observedAt: typeof data.dt === 'number' ? new Date(data.dt * 1000).toISOString() : new Date().toISOString(),
       };

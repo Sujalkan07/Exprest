@@ -59,12 +59,18 @@ export default function AnalyticsPage() {
     return stops.reduce((max, s) => ((s.delayMinutes || 0) > (max.delayMinutes || 0) ? s : max), stops[0]);
   }, [stops]);
 
-  // Derive Punctuality metrics honestly from real stops
-  const onTimeCount = useMemo(() => {
-    return stops.filter(s => (s.delayMinutes || 0) <= 15).length;
+  // Derive Punctuality metrics honestly only from stops with recorded delay
+  const evaluatedStops = useMemo(() => {
+    return stops.filter(s => typeof s.delayMinutes === 'number' && !isNaN(s.delayMinutes));
   }, [stops]);
 
-  const punctualityPercent = stops.length > 0 ? Math.round((onTimeCount / stops.length) * 100) : null;
+  const onTimeCount = useMemo(() => {
+    return evaluatedStops.filter(s => (s.delayMinutes ?? 0) <= 15).length;
+  }, [evaluatedStops]);
+
+  const punctualityPercent = evaluatedStops.length > 0
+    ? Math.round((onTimeCount / evaluatedStops.length) * 100)
+    : null;
 
   // Selected key stations for Elevation Profile X-axis
   const elevationNodes = useMemo(() => {
@@ -93,6 +99,53 @@ export default function AnalyticsPage() {
       current: elevationProfile[Math.min(currentStopIdx, elevationProfile.length - 1)]?.elevationM || 0,
     };
   }, [elevationProfile, hasElevationData, currentStopIdx]);
+
+  // Construct dynamic SVG coordinates and labels from genuine elevation profile
+  const elevationChart = useMemo(() => {
+    if (!hasElevationData) return null;
+
+    const elevations = elevationProfile.map(p => Number(p.elevationM) || 0);
+    const distances = elevationProfile.map(p => Number(p.distanceKm) || 0);
+
+    const rawMinY = Math.min(...elevations);
+    const rawMaxY = Math.max(...elevations);
+    const yPad = Math.max(20, Math.round((rawMaxY - rawMinY) * 0.1));
+    const yMin = Math.max(0, Math.floor((rawMinY - yPad) / 10) * 10);
+    const yMax = Math.ceil((rawMaxY + yPad) / 10) * 10;
+    const yRange = Math.max(1, yMax - yMin);
+
+    const xMin = Math.min(...distances);
+    const xMax = Math.max(...distances);
+    const xRange = Math.max(1, xMax - xMin);
+
+    const plotLeft = 55;
+    const plotRight = 980;
+    const plotTop = 20;
+    const plotBottom = 200;
+    const plotWidth = plotRight - plotLeft;
+    const plotHeight = plotBottom - plotTop;
+
+    const points = elevationProfile.map(p => {
+      const d = Number(p.distanceKm) || 0;
+      const e = Number(p.elevationM) || 0;
+      const x = plotLeft + ((d - xMin) / xRange) * plotWidth;
+      const y = plotBottom - ((e - yMin) / yRange) * plotHeight;
+      return { x, y, elevation: e, distance: d, stationCode: p.stationCode, stationName: p.stationName };
+    });
+
+    const chartPath = points.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`).join(' ');
+    const areaPath = points.length > 0
+      ? `${chartPath} L ${points[points.length - 1].x.toFixed(1)} ${plotBottom} L ${points[0].x.toFixed(1)} ${plotBottom} Z`
+      : '';
+
+    const yTicks = [0, 1, 2, 3, 4].map(i => {
+      const val = Math.round(yMax - (i / 4) * (yMax - yMin));
+      const y = plotTop + (i / 4) * plotHeight;
+      return { val, y };
+    });
+
+    return { chartPath, areaPath, yTicks, xMin, xMax, points, plotLeft, plotWidth, xRange };
+  }, [elevationProfile, hasElevationData]);
 
   if (isLoading) return <div className="p-8 text-center text-secondary">Loading Analytics...</div>;
   if (error || !journey) return <div className="p-8 text-center text-red-500">Error loading analytics.</div>;
@@ -294,7 +347,7 @@ export default function AnalyticsPage() {
             )}
 
             <div className="w-full overflow-x-auto pb-2">
-              {hasElevationData ? (
+              {hasElevationData && elevationChart ? (
                 <svg className="w-full min-w-[760px] h-48 sm:h-56" preserveAspectRatio="none" viewBox="0 0 1000 240">
                   <defs>
                     <linearGradient id="elevationGrad" x1="0" x2="0" y1="0" y2="1">
@@ -304,31 +357,31 @@ export default function AnalyticsPage() {
                   </defs>
 
                   <g stroke="#e7e7ea" strokeDasharray="2,2" strokeWidth="1">
-                    <line x1="45" x2="980" y1="20" y2="20"></line>
-                    <line x1="45" x2="980" y1="65" y2="65"></line>
-                    <line x1="45" x2="980" y1="110" y2="110"></line>
-                    <line x1="45" x2="980" y1="155" y2="155"></line>
-                    <line x1="45" x2="980" y1="200" y2="200"></line>
+                    {elevationChart.yTicks.map((t, idx) => (
+                      <line key={idx} x1="45" x2="980" y1={t.y} y2={t.y}></line>
+                    ))}
                   </g>
 
                   <g className="text-[10px] font-mono fill-secondary" textAnchor="end">
-                    <text x="38" y="24">800m</text>
-                    <text x="38" y="69">600m</text>
-                    <text x="38" y="114">400m</text>
-                    <text x="38" y="159">200m</text>
-                    <text x="38" y="204">0m</text>
+                    {elevationChart.yTicks.map((t, idx) => (
+                      <text key={idx} x="40" y={t.y + 4}>{t.val}m</text>
+                    ))}
                   </g>
 
-                  <path d="M 50 200 L 50 120 C 200 80, 400 180, 600 60 C 750 30, 850 140, 980 150 L 980 200 Z" fill="url(#elevationGrad)"></path>
-                  <path d="M 50 120 C 200 80, 400 180, 600 60 C 750 30, 850 140, 980 150" fill="none" stroke="#0284c7" strokeLinecap="round" strokeWidth="3"></path>
+                  {/* Dynamic Area Fill & Elevation Contour */}
+                  {elevationChart.areaPath && (
+                    <path d={elevationChart.areaPath} fill="url(#elevationGrad)"></path>
+                  )}
+                  {elevationChart.chartPath && (
+                    <path d={elevationChart.chartPath} fill="none" stroke="#0284c7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5"></path>
+                  )}
 
-                  {/* Nodes */}
-                  {elevationNodes.map((stn, idx) => {
-                    const cx = 50 + (idx / Math.max(1, elevationNodes.length - 1)) * 930;
-                    return (
-                      <circle key={stn.stationId || idx} cx={cx} cy="200" fill="#0284c7" r="4" stroke="#ffffff" strokeWidth="1.5" />
-                    );
-                  })}
+                  {/* Elevation sample points */}
+                  {elevationChart.points.map((pt, idx) => (
+                    <circle key={idx} cx={pt.x} cy={pt.y} fill="#0284c7" r="3.5" stroke="#ffffff" strokeWidth="1.5">
+                      <title>{pt.stationCode ? `${pt.stationCode}: ` : ''}{pt.elevation}m ({Math.round(pt.distance)} km)</title>
+                    </circle>
+                  ))}
                 </svg>
               ) : (
                 <div className="py-12 text-center text-body-sm font-body-sm text-secondary bg-surface/40 rounded-lg border border-dashed border-border">
@@ -403,7 +456,7 @@ export default function AnalyticsPage() {
             </div>
             <div className="mt-6 pt-3 border-t border-border flex items-center justify-between text-label font-label text-secondary">
               <span>RailRadar Real-Time Telemetry Tracking Active</span>
-              <span className="text-on-surface font-semibold">Master Slot Priority: Rank 1 (High)</span>
+              <span className="text-on-surface font-semibold">Master Slot Tracking: Standard Operational Slot</span>
             </div>
           </div>
 
@@ -430,7 +483,7 @@ export default function AnalyticsPage() {
                       {punctualityPercent != null ? `${punctualityPercent}%` : '—'}
                     </div>
                     <span className="text-label font-label text-success">
-                      {punctualityPercent != null ? `${onTimeCount} of ${stops.length} halts within 15m buffer` : 'Awaiting timetable data'}
+                      {punctualityPercent != null ? `${onTimeCount} of ${evaluatedStops.length} recorded halts within 15m buffer` : 'Awaiting timetable data'}
                     </span>
                   </div>
                   <div className="w-12 h-12 rounded-full border-2 border-primary flex items-center justify-center font-label text-primary font-bold">
@@ -460,7 +513,7 @@ export default function AnalyticsPage() {
                       {delayMinutes <= 0 ? 'Clear (On Time)' : delayMinutes <= 15 ? `Nominal (+${delayMinutes}m)` : `Caution (+${delayMinutes}m)`}
                     </div>
                     <span className="text-label font-label text-secondary">
-                      {delayMinutes <= 0 ? 'Automatic Block Signaling (ABS) Clear' : 'Track section headway spacing active'}
+                      {delayMinutes <= 0 ? 'Track section headway: Clear' : 'Track section headway spacing active'}
                     </span>
                   </div>
                   <span className={`w-3 h-3 rounded-full ${delayMinutes <= 15 ? 'bg-success' : 'bg-warning'}`}></span>
@@ -469,7 +522,7 @@ export default function AnalyticsPage() {
               </div>
             </div>
             <div className="mt-6 pt-3 border-t border-border flex items-center justify-between text-label font-label text-secondary">
-              <span>Automatic Train Protection: Kavach Active</span>
+              <span>Corridor Signaling: Standard Block Protection</span>
               <span className="text-success font-medium">Braking Distance: Nominal</span>
             </div>
           </div>

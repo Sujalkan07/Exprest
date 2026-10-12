@@ -57,13 +57,11 @@ export default function LoginPage() {
         });
 
         if (error) {
-          // If Supabase sign up returns an error (e.g. invalid credentials or network),
-          // fallback to local demo account so user is never blocked
-          saveLocalUserAndRedirect(displayName, email);
           setMessage({
-            type: 'success',
-            text: 'Account created! Redirecting...',
+            type: 'error',
+            text: error.message || 'Failed to create account. Please check your details.',
           });
+          setLoading(false);
           return;
         }
 
@@ -81,12 +79,11 @@ export default function LoginPage() {
         });
 
         if (error) {
-          // If Supabase credentials fail, fallback gracefully so user can access the app
-          saveLocalUserAndRedirect(displayName, email);
           setMessage({
-            type: 'success',
-            text: 'Signed in successfully! Redirecting...',
+            type: 'error',
+            text: error.message || 'Invalid email or password.',
           });
+          setLoading(false);
           return;
         }
 
@@ -101,12 +98,11 @@ export default function LoginPage() {
         });
       }
     } catch (err: any) {
-      // Fallback: seamless local login
-      saveLocalUserAndRedirect(displayName, email);
       setMessage({
-        type: 'success',
-        text: 'Signed in successfully! Redirecting...',
+        type: 'error',
+        text: err?.message || 'Authentication failed. Please try again.',
       });
+      setLoading(false);
     }
   };
 
@@ -124,19 +120,18 @@ export default function LoginPage() {
       });
 
       if (error) {
-        // Fallback to local Google demo login
-        saveLocalUserAndRedirect('Google User', 'user@gmail.com');
         setMessage({
-          type: 'success',
-          text: 'Google Sign-In successful! Redirecting...',
+          type: 'error',
+          text: error.message || 'Google Sign-In failed.',
         });
+        setLoading(false);
       }
     } catch (err: any) {
-      saveLocalUserAndRedirect('Google User', 'user@gmail.com');
       setMessage({
-        type: 'success',
-        text: 'Google Sign-In successful! Redirecting...',
+        type: 'error',
+        text: err?.message || 'Failed to initiate Google Sign-In.',
       });
+      setLoading(false);
     }
   };
 

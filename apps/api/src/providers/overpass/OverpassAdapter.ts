@@ -15,8 +15,8 @@ const CATEGORY_OVERPASS_MAP: Record<string, string[]> = {
 function buildOverpassQuery(bounds: GeoBounds, filters: string[]): string {
   const { minLat, maxLon, maxLat, minLon } = bounds;
   const bbox = `${minLat},${minLon},${maxLat},${maxLon}`;
-  const nodeFilters = filters.map(f => `node[${f}](${bbox});`).join('\n');
-  return `[out:json][timeout:15];(${nodeFilters});out body 30;`;
+  const nwrFilters = filters.map(f => `nwr[${f}](${bbox});`).join('\n');
+  return `[out:json][timeout:15];(${nwrFilters});out center 30;`;
 }
 
 function haversineDistanceM(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -65,21 +65,23 @@ export class OverpassAdapter implements PoiProvider {
           if (seenIds.has(poiId)) continue;
 
           const name = el.tags?.name || el.tags?.['name:en'] || el.tags?.official_name;
-          if (!name || typeof el.lat !== 'number' || typeof el.lon !== 'number') continue;
+          const lat = typeof el.lat === 'number' ? el.lat : el.center?.lat;
+          const lon = typeof el.lon === 'number' ? el.lon : el.center?.lon;
+          if (!name || typeof lat !== 'number' || typeof lon !== 'number') continue;
 
           // Calculate distance to the nearest route point or bounding box center
           let minDistanceM = 0;
           if (routePoints && routePoints.length > 0) {
             let shortest = Infinity;
             for (const pt of routePoints) {
-              const d = haversineDistanceM(el.lat, el.lon, pt.latitude, pt.longitude);
+              const d = haversineDistanceM(lat, lon, pt.latitude, pt.longitude);
               if (d < shortest) shortest = d;
             }
             minDistanceM = shortest !== Infinity ? shortest : 0;
           } else {
             const midLat = (bounds.minLat + bounds.maxLat) / 2;
             const midLon = (bounds.minLon + bounds.maxLon) / 2;
-            minDistanceM = haversineDistanceM(el.lat, el.lon, midLat, midLon);
+            minDistanceM = haversineDistanceM(lat, lon, midLat, midLon);
           }
 
           seenIds.add(poiId);
@@ -87,8 +89,8 @@ export class OverpassAdapter implements PoiProvider {
             id: poiId,
             category: cat as PoiCategory,
             name,
-            latitude: el.lat,
-            longitude: el.lon,
+            latitude: lat,
+            longitude: lon,
             distanceFromRouteM: minDistanceM,
             source: 'OpenStreetMap/Overpass',
             tags: el.tags || {},

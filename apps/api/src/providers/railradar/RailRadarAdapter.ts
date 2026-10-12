@@ -305,10 +305,14 @@ export class RailRadarAdapter implements TrainProvider {
       originStationId: train.originStationId,
       destinationStationId: train.destinationStationId,
       status: liveStatus,
-      startedAt: `${liveStartDate || actualStartDate}T00:00:00Z`,
-      completedAt: liveStatus === 'COMPLETED' ? `${actualStartDate}T23:59:59Z` : null,
+      startedAt: liveStatus !== 'NOT_STARTED'
+        ? (originStop?.actualDeparture || originStop?.scheduledDeparture || (originStop?.departure ? `${actualStartDate}T${originStop.departure}:00+05:30` : null))
+        : null,
+      completedAt: liveStatus === 'COMPLETED'
+        ? (destStop?.actualArrival || destStop?.scheduledArrival || (destStop?.arrival ? `${actualStartDate}T${destStop.arrival}:00+05:30` : null))
+        : null,
       observedAt: activeLiveData?.lastUpdatedAt || null,
-      delayMinutes: isLive ? (activeLiveData?.delayMinutes || 0) : 0,
+      delayMinutes: (activeLiveData && typeof activeLiveData.delayMinutes === 'number') ? activeLiveData.delayMinutes : undefined,
     } as any;
 
     // Build stops from the route
