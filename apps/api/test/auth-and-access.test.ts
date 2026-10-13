@@ -140,27 +140,15 @@ describe('Authentication, Access Security & Provider Error Handling', () => {
     });
   });
 
-  describe('5. ScraperAPI HTTPS Transport & Credential Redaction', () => {
-    it('returns original target URL when SCRAPER_API_KEY is not configured', () => {
+  describe('5. Direct RailRadar Transport & Credential Redaction', () => {
+    it('returns direct upstream provider target URL without proxy manipulation', () => {
       const target = 'https://railradar.in/api/v1/trains/12951';
-      const url = RailRadarAdapter.buildUrl(target, '');
+      const url = RailRadarAdapter.buildUrl(target);
       assert.equal(url, target);
     });
 
-    it('constructs secure HTTPS proxy URL and URL-encodes parameters when key is configured', () => {
-      const target = 'https://railradar.in/api/v1/trains/12951/live';
-      const testKey = 'test_scraper_key_abc123';
-      const url = RailRadarAdapter.buildUrl(target, testKey);
-
-      assert.ok(url.startsWith('https://api.scraperapi.com?'), 'Must use HTTPS endpoint');
-      assert.ok(!url.startsWith('http://'), 'Must NEVER use plain HTTP');
-      assert.ok(url.includes(`api_key=${testKey}`));
-      assert.ok(url.includes(`url=${encodeURIComponent(target)}`));
-      assert.ok(url.includes('keep_headers=true'));
-    });
-
     it('redacts sensitive api_key from logs and diagnostic error strings', () => {
-      const leakString = 'Fetch failed at https://api.scraperapi.com?api_key=secret_xyz987&url=https%3A%2F%2Frailradar.in';
+      const leakString = 'Fetch failed at https://railradar.in/api/v1/trains/12951?api_key=secret_xyz987';
       const redacted = RailRadarAdapter.redactCredentials(leakString);
 
       assert.ok(!redacted.includes('secret_xyz987'), 'Secret key must not appear in output');

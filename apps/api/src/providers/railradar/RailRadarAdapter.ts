@@ -20,13 +20,9 @@ export class RailRadarAdapter implements TrainProvider {
   }
 
   /**
-   * Builds the request URL, proxying via ScraperAPI over HTTPS if configured.
+   * Builds the request URL directly to the upstream RailRadar provider.
    */
-  static buildUrl(targetUrl: string, customScraperKey?: string): string {
-    const scraperKey = (customScraperKey !== undefined ? customScraperKey : (process.env.SCRAPER_API_KEY || '')).trim().replace(/['"]/g, '');
-    if (scraperKey) {
-      return `https://api.scraperapi.com?api_key=${encodeURIComponent(scraperKey)}&url=${encodeURIComponent(targetUrl)}&keep_headers=true`;
-    }
+  static buildUrl(targetUrl: string): string {
     return targetUrl;
   }
 
@@ -176,6 +172,8 @@ export class RailRadarAdapter implements TrainProvider {
       if (liveRes.ok) {
         const liveJson = await liveRes.json();
         liveData = liveJson?.data;
+      } else {
+        console.warn(`RailRadar live fetch returned status: ${liveRes.status} for train ${trainNumber}`);
       }
     } catch (err) {
       console.warn(`RailRadar live fetch error for train ${trainNumber}:`, this.sanitizeError(err));
@@ -192,6 +190,8 @@ export class RailRadarAdapter implements TrainProvider {
       if (staticRes.ok) {
         const staticJson = await staticRes.json();
         staticData = staticJson?.data;
+      } else {
+        console.warn(`RailRadar static fetch returned status: ${staticRes.status} for train ${trainNumber}`);
       }
     } catch (err) {
       console.warn(`RailRadar static fetch error for train ${trainNumber}:`, this.sanitizeError(err));

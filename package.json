@@ -6,7 +6,8 @@
     "dev:turbo": "turbo run dev",
     "build": "pnpm -r run build",
     "lint": "pnpm -r run lint",
-    "typecheck": "pnpm -r run typecheck"
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm --filter @exprest/api test"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

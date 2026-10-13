@@ -34,7 +34,7 @@ export default function CompanionPage() {
 
   const journey = data?.data;
   const progress = journey?.progress;
-  const stops: any[] = journey?.stops || [];
+  const stops: any[] = useMemo(() => journey?.stops || [], [journey?.stops]);
   const currentStopIdx = progress?.currentStopIdx ?? 0;
   const nextStopIdx = progress?.nextStopIdx ?? Math.min(stops.length - 1, currentStopIdx + 1);
   const currentStop = stops[currentStopIdx];

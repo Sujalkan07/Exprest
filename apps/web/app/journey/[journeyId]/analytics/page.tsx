@@ -45,7 +45,7 @@ export default function AnalyticsPage() {
   const journey = data?.data;
   const analyticsData = analyticsRes?.data;
   const progress = journey?.progress;
-  const stops: any[] = journey?.stops || [];
+  const stops: any[] = useMemo(() => journey?.stops || [], [journey?.stops]);
   const currentStopIdx = progress?.currentStopIdx ?? 0;
   const nextStopIdx = progress?.nextStopIdx ?? Math.min(stops.length - 1, currentStopIdx + 1);
   const currentStop = stops[currentStopIdx];
@@ -87,7 +87,7 @@ export default function AnalyticsPage() {
     ];
   }, [stops]);
 
-  const elevationProfile: any[] = analyticsData?.elevationProfile || [];
+  const elevationProfile: any[] = useMemo(() => analyticsData?.elevationProfile || [], [analyticsData?.elevationProfile]);
   const hasElevationData = elevationProfile.length >= 2;
 
   const elevationStats = useMemo(() => {

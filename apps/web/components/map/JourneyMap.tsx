@@ -322,6 +322,7 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
       map.current = null;
       setMapReady(false);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapTilerKey]);
 
   // Expose methods via ref
@@ -364,6 +365,7 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
       trainMarkerRef.current.setLngLat([currentPosition.longitude, currentPosition.latitude]);
       map.current?.panTo([currentPosition.longitude, currentPosition.latitude], { duration: 1000 });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPosition?.latitude, currentPosition?.longitude, isFollowing, mapReady]);
 
   return (
