@@ -15,15 +15,18 @@ export const TopBar: React.FC = () => {
     let isMounted = true;
 
     async function loadUser() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!isMounted) return;
-      if (session?.user) {
-        const u = session.user;
-        const name = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'User';
-        setUser({ name, email: u.email || '', isLoggedIn: true });
-      } else {
-        setUser(null);
-      }
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!isMounted) return;
+        if (session?.user) {
+          const u = session.user;
+          const name = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'User';
+          setUser({ name, email: u.email || '', isLoggedIn: true });
+          return;
+        }
+      } catch {}
+
+      if (isMounted) setUser(null);
     }
 
     loadUser();
@@ -46,9 +49,15 @@ export const TopBar: React.FC = () => {
   }, [supabase]);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch {}
+    try {
+      localStorage.removeItem('exprest_user');
+    } catch {}
     setUser(null);
     router.push('/login');
+    router.refresh();
   };
 
   return (
@@ -76,7 +85,7 @@ export const TopBar: React.FC = () => {
             <div className="flex items-center gap-2 border-l border-border pl-3">
               <button
                 onClick={handleSignOut}
-                title="Sign Out"
+                title={`${user.name || 'User'} — Click to Sign Out`}
                 className="flex items-center gap-2 group"
               >
                 <div className="w-8 h-8 rounded-full bg-accent text-white flex items-center justify-center font-bold text-xs ring-2 ring-transparent group-hover:ring-accent/30 transition-all">

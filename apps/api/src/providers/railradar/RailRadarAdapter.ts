@@ -10,8 +10,36 @@ export interface TrainProvider {
 const BASE_URL = 'https://railradar.in/api/v1';
 
 export class RailRadarAdapter implements TrainProvider {
-  private apiKey = process.env.RAILRADAR_API_KEY!;
   private trainCoordsCache = new Map<string, Map<string, { lat: number; lng: number }>>();
+
+  /**
+   * Redacts sensitive API keys from strings, URLs, and diagnostic logs.
+   */
+  static redactCredentials(text: string): string {
+    return text.replace(/api_key=[^& \t\r\n]+/gi, 'api_key=[REDACTED]');
+  }
+
+  /**
+   * Builds the request URL, proxying via ScraperAPI over HTTPS if configured.
+   */
+  static buildUrl(targetUrl: string, customScraperKey?: string): string {
+    const scraperKey = (customScraperKey !== undefined ? customScraperKey : (process.env.SCRAPER_API_KEY || '')).trim().replace(/['"]/g, '');
+    if (scraperKey) {
+      return `https://api.scraperapi.com?api_key=${encodeURIComponent(scraperKey)}&url=${encodeURIComponent(targetUrl)}&keep_headers=true`;
+    }
+    return targetUrl;
+  }
+
+  private buildUrl(targetUrl: string): string {
+    return RailRadarAdapter.buildUrl(targetUrl);
+  }
+
+  private sanitizeError(err: unknown): string {
+    if (err instanceof Error) {
+      return RailRadarAdapter.redactCredentials(err.message);
+    }
+    return RailRadarAdapter.redactCredentials(String(err));
+  }
 
   private get headers() {
     const key = (process.env.RAILRADAR_API_KEY || '').trim().replace(/['"]/g, '');
@@ -23,14 +51,6 @@ export class RailRadarAdapter implements TrainProvider {
       Accept: 'application/json',
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     };
-  }
-
-  private buildUrl(targetUrl: string): string {
-    const scraperKey = process.env.SCRAPER_API_KEY;
-    if (scraperKey) {
-      return `http://api.scraperapi.com?api_key=${scraperKey}&url=${encodeURIComponent(targetUrl)}&keep_headers=true`;
-    }
-    return targetUrl;
   }
 
   private async getCoordsForTrain(trainNumber: string): Promise<Map<string, { lat: number; lng: number }>> {
@@ -56,7 +76,7 @@ export class RailRadarAdapter implements TrainProvider {
         return map;
       }
     } catch (err) {
-      console.warn(`RailRadar getCoordsForTrain error for ${trainNumber}:`, err);
+      console.warn(`RailRadar getCoordsForTrain error for ${trainNumber}:`, this.sanitizeError(err));
     }
     return new Map();
   }
@@ -134,11 +154,11 @@ export class RailRadarAdapter implements TrainProvider {
             }
           }
         } catch (fallbackErr) {
-          console.warn(`RailRadar 5-digit fallback error for ${q}:`, fallbackErr);
+          console.warn(`RailRadar 5-digit fallback error for ${q}:`, this.sanitizeError(fallbackErr));
         }
       }
     } catch (err) {
-      console.error('RailRadar search API error:', err);
+      console.error('RailRadar search API error:', this.sanitizeError(err));
     }
 
     return [];
@@ -158,7 +178,7 @@ export class RailRadarAdapter implements TrainProvider {
         liveData = liveJson?.data;
       }
     } catch (err) {
-      console.warn(`RailRadar live fetch error for train ${trainNumber}:`, err);
+      console.warn(`RailRadar live fetch error for train ${trainNumber}:`, this.sanitizeError(err));
     }
 
     // FALLBACK / STATIC: use schedule endpoint
@@ -174,7 +194,7 @@ export class RailRadarAdapter implements TrainProvider {
         staticData = staticJson?.data;
       }
     } catch (err) {
-      console.warn(`RailRadar static fetch error for train ${trainNumber}:`, err);
+      console.warn(`RailRadar static fetch error for train ${trainNumber}:`, this.sanitizeError(err));
     }
 
     if (!staticData && !liveData) return null;
@@ -401,7 +421,7 @@ export class RailRadarAdapter implements TrainProvider {
         observedAt: d.lastUpdatedAt || null,
       };
     } catch (err) {
-      console.warn(`RailRadar getLivePosition error for ${trainNumber}:`, err);
+      console.warn(`RailRadar getLivePosition error for ${trainNumber}:`, this.sanitizeError(err));
       return null;
     }
   }
@@ -428,7 +448,7 @@ export class RailRadarAdapter implements TrainProvider {
 
       return { type: 'LineString', coordinates: coords };
     } catch (err) {
-      console.warn(`RailRadar getRouteGeometry error for ${trainNumber}:`, err);
+      console.warn(`RailRadar getRouteGeometry error for ${trainNumber}:`, this.sanitizeError(err));
       return null;
     }
   }

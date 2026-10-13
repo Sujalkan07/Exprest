@@ -1,13 +1,24 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, Suspense, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [supabase] = useState(() => createClient());
+
+  const rawRedirect = searchParams.get('redirectTo');
+  const safeRedirect =
+    rawRedirect &&
+    rawRedirect.startsWith('/') &&
+    !rawRedirect.startsWith('//') &&
+    !rawRedirect.includes(':') &&
+    !rawRedirect.includes('\\')
+      ? rawRedirect
+      : '/';
 
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
@@ -17,37 +28,45 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const saveLocalUserAndRedirect = (userName: string, userEmail: string) => {
-    try {
-      const userObj = {
-        name: userName,
-        email: userEmail,
-        isLoggedIn: true,
-      };
-      localStorage.setItem('exprest_user', JSON.stringify(userObj));
-    } catch {}
-    setTimeout(() => {
-      router.push('/');
-    }, 800);
-  };
+  useEffect(() => {
+    if (searchParams.get('error') === 'oauth_failed') {
+      setMessage({
+        type: 'error',
+        text: 'Google authentication could not be completed. Please try again.',
+      });
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
 
-    if (!email || !password) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
       setMessage({ type: 'error', text: 'Please enter both email and password.' });
       setLoading(false);
       return;
     }
 
-    const displayName = name.trim() || email.split('@')[0];
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setMessage({ type: 'error', text: 'Please enter a valid email address.' });
+      setLoading(false);
+      return;
+    }
+
+    if (password.length < 6) {
+      setMessage({ type: 'error', text: 'Password must be at least 6 characters long.' });
+      setLoading(false);
+      return;
+    }
+
+    const displayName = name.trim() || trimmedEmail.split('@')[0];
 
     try {
       if (isSignUp) {
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: trimmedEmail,
           password,
           options: {
             data: {
@@ -65,16 +84,26 @@ export default function LoginPage() {
           return;
         }
 
-        saveLocalUserAndRedirect(displayName, email);
-        setMessage({
-          type: 'success',
-          text: data?.session
-            ? 'Account created successfully! Redirecting...'
-            : 'Account registered! Redirecting to dashboard...',
-        });
+        if (data?.session) {
+          setMessage({
+            type: 'success',
+            text: 'Account registered successfully! Redirecting...',
+          });
+          setTimeout(() => {
+            router.push(safeRedirect);
+            router.refresh();
+          }, 600);
+        } else {
+          // Email confirmation is required by Supabase
+          setMessage({
+            type: 'success',
+            text: 'Account registered! Please check your email inbox to verify your account before signing in.',
+          });
+          setLoading(false);
+        }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
-          email,
+          email: trimmedEmail,
           password,
         });
 
@@ -87,20 +116,19 @@ export default function LoginPage() {
           return;
         }
 
-        const resolvedName =
-          data?.user?.user_metadata?.full_name ||
-          data?.user?.user_metadata?.name ||
-          displayName;
-        saveLocalUserAndRedirect(resolvedName, email);
         setMessage({
           type: 'success',
           text: 'Signed in successfully! Redirecting...',
         });
+        setTimeout(() => {
+          router.push(safeRedirect);
+          router.refresh();
+        }, 600);
       }
     } catch (err: any) {
       setMessage({
         type: 'error',
-        text: err?.message || 'Authentication failed. Please try again.',
+        text: err?.message || 'Authentication request failed. Please check connection.',
       });
       setLoading(false);
     }
@@ -111,18 +139,22 @@ export default function LoginPage() {
     setMessage(null);
 
     try {
-      const redirectUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : undefined;
+      const callbackUrl =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}/auth/callback?redirectTo=${encodeURIComponent(safeRedirect)}`
+          : undefined;
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: redirectUrl,
+          redirectTo: callbackUrl,
         },
       });
 
       if (error) {
         setMessage({
           type: 'error',
-          text: error.message || 'Google Sign-In failed.',
+          text: error.message || 'Google Sign-In failed to start.',
         });
         setLoading(false);
       }
@@ -135,22 +167,12 @@ export default function LoginPage() {
     }
   };
 
-  const handleDemoSignIn = () => {
-    setLoading(true);
-    saveLocalUserAndRedirect('Rail Passenger', 'passenger@exprest.rail');
-    setMessage({
-      type: 'success',
-      text: 'Logged in as Rail Passenger! Redirecting...',
-    });
-  };
-
   return (
     <div className="min-h-screen bg-surface-container-lowest text-on-surface flex flex-col justify-between antialiased font-sans">
-      
       {/* Top Header */}
       <header className="w-full border-b border-border bg-surface-container-lowest sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-6 h-13 py-2.5 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity">
+          <div className="flex items-center gap-2">
             <div className="w-5 h-5 rounded-md bg-primary text-on-primary flex items-center justify-center">
               <span
                 className="material-symbols-outlined text-[14px]"
@@ -161,22 +183,17 @@ export default function LoginPage() {
             </div>
             <span className="text-[15px] font-semibold tracking-tight text-on-surface">Exprest</span>
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-success"></span>
-          </Link>
+          </div>
 
-          <Link
-            href="/"
-            className="text-[13px] text-secondary hover:text-on-surface transition-colors flex items-center gap-1"
-          >
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-            Back to Dashboard
-          </Link>
+          <span className="text-[12px] text-text-tertiary font-mono">
+            Secure Authentication
+          </span>
         </div>
       </header>
 
       {/* Main Container */}
       <main className="flex-1 flex items-center justify-center p-6 my-6">
         <div className="w-full max-w-[420px] bg-surface-container-lowest border border-border rounded-2xl p-7 shadow-sm">
-          
           {/* Header Title */}
           <div className="text-center mb-6">
             <div className="w-10 h-10 rounded-xl bg-primary text-on-primary flex items-center justify-center mx-auto mb-3 shadow-xs">
@@ -201,7 +218,10 @@ export default function LoginPage() {
           <div className="flex bg-surface-container rounded-xl p-1 mb-5 border border-border">
             <button
               type="button"
-              onClick={() => { setIsSignUp(false); setMessage(null); }}
+              onClick={() => {
+                setIsSignUp(false);
+                setMessage(null);
+              }}
               className={`flex-1 py-1.5 rounded-lg text-[13px] font-medium transition-all ${
                 !isSignUp
                   ? 'bg-surface-container-lowest text-on-surface shadow-xs font-semibold'
@@ -212,7 +232,10 @@ export default function LoginPage() {
             </button>
             <button
               type="button"
-              onClick={() => { setIsSignUp(true); setMessage(null); }}
+              onClick={() => {
+                setIsSignUp(true);
+                setMessage(null);
+              }}
               className={`flex-1 py-1.5 rounded-lg text-[13px] font-medium transition-all ${
                 isSignUp
                   ? 'bg-surface-container-lowest text-on-surface shadow-xs font-semibold'
@@ -247,10 +270,22 @@ export default function LoginPage() {
             className="w-full flex items-center justify-center gap-2.5 px-4 py-2.5 bg-surface-container-lowest hover:bg-surface-container border border-border rounded-xl text-[13px] font-medium text-on-surface shadow-xs transition-all active:scale-[0.99] disabled:opacity-60 mb-4"
           >
             <svg width="17" height="17" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+              <path
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                fill="#4285F4"
+              />
+              <path
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                fill="#34A853"
+              />
+              <path
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                fill="#FBBC05"
+              />
+              <path
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                fill="#EA4335"
+              />
             </svg>
             <span>{isSignUp ? 'Sign up with Google' : 'Sign in with Google'}</span>
           </button>
@@ -340,19 +375,6 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Quick Demo Guest Login */}
-          <div className="mt-4 pt-3.5 border-t border-border text-center">
-            <button
-              type="button"
-              onClick={handleDemoSignIn}
-              disabled={loading}
-              className="w-full py-2 px-3 text-[12px] font-medium text-secondary hover:text-on-surface bg-surface-container hover:bg-surface-variant rounded-lg transition-colors flex items-center justify-center gap-1.5"
-            >
-              <span className="material-symbols-outlined text-[15px]">person</span>
-              <span>Continue as Guest / Demo User</span>
-            </button>
-          </div>
-
           {/* Terms note */}
           <p className="text-[11px] text-text-tertiary text-center mt-5">
             By continuing, you agree to Exprest&apos;s Terms of Service and Privacy Policy.
@@ -365,5 +387,13 @@ export default function LoginPage() {
         Exprest Rail Intelligence Platform · Built for Indian Railways
       </footer>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-surface-container-lowest" />}>
+      <LoginForm />
+    </Suspense>
   );
 }

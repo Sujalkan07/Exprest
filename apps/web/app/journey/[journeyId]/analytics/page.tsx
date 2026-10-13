@@ -177,7 +177,7 @@ export default function AnalyticsPage() {
                 Journey Analytics &amp; Telemetry
               </h1>
               <p className="text-body-sm font-body-sm text-secondary mt-0.5">
-                {journey?.train?.number} {journey?.train?.name} · {journey?.train?.originStationName} ({journey?.train?.originStationId}) to {journey?.train?.destinationStationName} ({journey?.train?.destinationStationId}) · LHB Rake · Electric WAP-7
+                {journey?.train?.number} {journey?.train?.name} · {journey?.train?.originStationName} ({journey?.train?.originStationId}) to {journey?.train?.destinationStationName} ({journey?.train?.destinationStationId}){journey?.train?.type ? ` · ${journey?.train?.type}` : ''}
               </p>
             </div>
 

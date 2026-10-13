@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { registerRoutes } from './routes/index.js';
+import { getCorsAllowedOrigins } from './cors.js';
 
 const app = Fastify({
   logger: {
@@ -30,7 +31,11 @@ async function main() {
     }
   }
 
-  await app.register(cors, { origin: true });
+  const allowedOrigins = getCorsAllowedOrigins();
+  await app.register(cors, {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
 

@@ -25,7 +25,7 @@ export interface FavoriteTrainItem {
   type: string;
   from: string;
   to: string;
-  status: 'on-time' | 'delayed' | 'boarding';
+  status: 'scheduled' | 'on-time' | 'delayed' | 'boarding';
   statusLabel: string;
   sector: string;
   speed: string;
@@ -35,65 +35,18 @@ export interface FavoriteTrainItem {
   journeyId: string;
 }
 
-// Initial fallback popular trains shown if user has not searched any trains yet
 const getTodayIst = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
-const DEFAULT_FAVORITE_TRAINS: FavoriteTrainItem[] = [
-  {
-    number: '12951',
-    name: 'Mumbai Tejas Rajdhani',
-    type: 'Superfast',
-    from: 'NDLS',
-    to: 'MMCT',
-    status: 'on-time',
-    statusLabel: 'Scheduled Service',
-    sector: 'NDLS → MMCT Corridor',
-    speed: 'Max 130 km/h',
-    platform: 'Track Live for PF',
-    eta: '16h 05m journey',
-    progress: 0,
-    journeyId: `journey_12951_${getTodayIst()}`,
-  },
-  {
-    number: '22436',
-    name: 'Vande Bharat Express',
-    type: 'Semi-High Speed',
-    from: 'NDLS',
-    to: 'BSB',
-    status: 'on-time',
-    statusLabel: 'Scheduled Service',
-    sector: 'NDLS → BSB Corridor',
-    speed: 'Max 130 km/h',
-    platform: 'Track Live for PF',
-    eta: '8h 00m journey',
-    progress: 0,
-    journeyId: `journey_22436_${getTodayIst()}`,
-  },
-  {
-    number: '12004',
-    name: 'Swarna Shatabdi',
-    type: 'Shatabdi',
-    from: 'NDLS',
-    to: 'LKO',
-    status: 'boarding',
-    statusLabel: 'Scheduled Service',
-    sector: 'NDLS → LKO Corridor',
-    speed: 'Max 130 km/h',
-    platform: 'Track Live for PF',
-    eta: '6h 35m journey',
-    progress: 0,
-    journeyId: `journey_12004_${getTodayIst()}`,
-  },
-];
-
-function statusColor(status: 'on-time' | 'delayed' | 'boarding') {
+function statusColor(status: 'scheduled' | 'on-time' | 'delayed' | 'boarding') {
+  if (status === 'scheduled') return 'text-secondary';
   if (status === 'on-time' || status === 'boarding') return 'text-success';
-  if (status === 'delayed') return 'text-secondary';
+  if (status === 'delayed') return 'text-warning';
   return 'text-secondary';
 }
-function statusDot(status: 'on-time' | 'delayed' | 'boarding') {
+function statusDot(status: 'scheduled' | 'on-time' | 'delayed' | 'boarding') {
+  if (status === 'scheduled') return 'bg-neutral-400 dark:bg-neutral-600';
   if (status === 'on-time' || status === 'boarding') return 'bg-success';
-  if (status === 'delayed') return 'bg-secondary';
+  if (status === 'delayed') return 'bg-warning';
   return 'bg-secondary';
 }
 
@@ -253,12 +206,24 @@ export default function HomePage() {
   const [supabase] = useState(() => createClient());
 
   useEffect(() => {
-    // 1. Load Recent Searches from localStorage
+    // 1. Load Recent Searches from localStorage safely
     try {
       const stored = localStorage.getItem('exprest_recent_searches');
-      if (stored) setRecentSearches(JSON.parse(stored));
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const validRecents = parsed.filter(
+            (r): r is RecentSearch => Boolean(r && typeof r === 'object' && r.number && r.name && r.journeyId)
+          );
+          setRecentSearches(validRecents);
+        } else {
+          setRecentSearches([]);
+        }
+      } else {
+        setRecentSearches([]);
+      }
     } catch {
-      /* ignore */
+      setRecentSearches([]);
     }
 
     // 2. Load Favorite / Saved Trains dynamically from localStorage
@@ -267,42 +232,34 @@ export default function HomePage() {
       if (storedFavs) {
         const parsed = JSON.parse(storedFavs);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setFavoriteTrains(parsed);
+          // Sanitize legacy entries: neutralize any fabricated mock data (e.g. fake speeds or platforms)
+          const sanitized: FavoriteTrainItem[] = parsed
+            .filter((item): item is FavoriteTrainItem => Boolean(item && typeof item === 'object' && item.number && item.name))
+            .map((item) => ({
+              number: String(item.number),
+              name: String(item.name),
+              type: item.type || 'Express',
+              from: item.from || 'Source',
+              to: item.to || 'Destination',
+              status: 'scheduled',
+              statusLabel: item.statusLabel && !item.statusLabel.includes('delay') && !item.statusLabel.includes('On Time') ? item.statusLabel : 'Pinned Train',
+              sector: item.sector || 'Rail Corridor',
+              speed: '—',
+              platform: '—',
+              eta: '—',
+              progress: 0,
+              journeyId: item.journeyId || `journey_${item.number}_${getTodayIst()}`,
+            }));
+          setFavoriteTrains(sanitized);
         } else {
-          setFavoriteTrains(DEFAULT_FAVORITE_TRAINS);
+          setFavoriteTrains([]);
         }
       } else {
-        // Fallback: If user had recent searches from previous runs, seed them
-        const storedRecent = localStorage.getItem('exprest_recent_searches');
-        if (storedRecent) {
-          const recents: RecentSearch[] = JSON.parse(storedRecent);
-          if (Array.isArray(recents) && recents.length > 0) {
-            const converted: FavoriteTrainItem[] = recents.map((r, idx) => ({
-              number: r.number,
-              name: r.name,
-              type: r.number.startsWith('22') ? 'Vande Bharat' : r.number.startsWith('12') ? 'Superfast' : 'Express',
-              from: 'NDLS',
-              to: 'DEST',
-              status: idx === 1 ? 'delayed' : 'on-time',
-              statusLabel: idx === 1 ? '+3 min delay' : 'On Time',
-              sector: 'IR Live Section',
-              speed: '120 km/h',
-              platform: 'PF 1',
-              eta: 'En Route',
-              progress: 50,
-              journeyId: r.journeyId,
-            }));
-            setFavoriteTrains(converted);
-            localStorage.setItem('exprest_favorite_trains', JSON.stringify(converted));
-          } else {
-            setFavoriteTrains(DEFAULT_FAVORITE_TRAINS);
-          }
-        } else {
-          setFavoriteTrains(DEFAULT_FAVORITE_TRAINS);
-        }
+        setFavoriteTrains([]);
       }
     } catch {
-      setFavoriteTrains(DEFAULT_FAVORITE_TRAINS);
+      // Malformed localStorage JSON or corrupted data: fallback cleanly to empty state without crashing
+      setFavoriteTrains([]);
     }
 
     // 3. User session check
@@ -325,18 +282,6 @@ export default function HomePage() {
         }
       } catch {}
 
-      // Fallback: check localStorage for local/demo session
-      try {
-        const stored = localStorage.getItem('exprest_user');
-        if (stored) {
-          const u = JSON.parse(stored);
-          if (u && u.isLoggedIn) {
-            setUser(u);
-            return;
-          }
-        }
-      } catch {}
-
       if (isMounted) setUser(null);
     }
     loadUser();
@@ -353,6 +298,8 @@ export default function HomePage() {
           u.email?.split('@')[0] ||
           'User';
         setUser({ name, email: u.email || '', isLoggedIn: true });
+      } else {
+        setUser(null);
       }
     });
 
@@ -370,6 +317,8 @@ export default function HomePage() {
       localStorage.removeItem('exprest_user');
     } catch {}
     setUser(null);
+    router.push('/login');
+    router.refresh();
   };
 
   // Called whenever any train is searched or selected
@@ -405,12 +354,12 @@ export default function HomePage() {
       type: typeLabel,
       from: fromCode,
       to: toCode,
-      status: 'on-time',
-      statusLabel: 'Tracked Train',
+      status: 'scheduled',
+      statusLabel: 'Pinned Train',
       sector: (train as any).originStationName ? `${(train as any).originStationName} Corridor` : 'Rail Corridor',
-      speed: 'Track Live for Speed',
-      platform: 'Track Live for PF',
-      eta: 'Click to View',
+      speed: '—',
+      platform: '—',
+      eta: '—',
       progress: 0,
       journeyId,
     };
@@ -495,11 +444,6 @@ export default function HomePage() {
 
           {/* Right utilities */}
           <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-1.5 text-[12px] text-secondary">
-              <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
-              <span>Live APIs Connected</span>
-            </div>
-            <span className="hidden sm:inline-block h-3.5 w-px bg-border"></span>
             <div className="hidden sm:flex items-center gap-1 px-1.5 py-0.5 rounded border border-border bg-surface text-[11px] font-mono text-text-tertiary">
               <span>⌘K</span>
             </div>
@@ -507,7 +451,7 @@ export default function HomePage() {
             {user?.isLoggedIn ? (
               <button
                 onClick={handleSignOut}
-                title="Click to Sign Out"
+                title={`${user.name || 'User'} — Click to Sign Out`}
                 className="w-7 h-7 rounded-full border border-border bg-primary text-on-primary flex items-center justify-center font-bold text-xs hover:opacity-90 transition-opacity"
               >
                 {user.name ? user.name[0].toUpperCase() : 'U'}
@@ -541,9 +485,7 @@ export default function HomePage() {
                 <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
                 <span className="font-medium text-on-surface">Indian Railways Network</span>
                 <span className="text-border">·</span>
-                <span className="font-mono tabular-nums">12,480+ active</span>
-                <span className="text-border">·</span>
-                <span>42ms</span>
+                <span className="font-mono text-[11px] text-text-tertiary">Live Telemetry &amp; Timetables</span>
               </div>
               <h1 className="text-[34px] sm:text-[38px] leading-[1.18] font-[650] text-on-surface tracking-[-0.03em] mb-2.5">
                 Real-time train intelligence, simplified.
@@ -632,9 +574,9 @@ export default function HomePage() {
                         <span className="text-secondary group-hover:text-on-surface">
                           {s.name}
                         </span>
-                        <span className="flex items-center gap-1 text-[11px] text-success">
-                          <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
-                          Live
+                        <span className="flex items-center gap-1 text-[11px] text-text-tertiary font-mono">
+                          <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 dark:bg-neutral-600"></span>
+                          Track
                         </span>
                       </Link>
                       <button
@@ -823,11 +765,11 @@ export default function HomePage() {
             <div className="w-full md:w-auto flex items-center justify-between md:justify-end gap-5 z-10">
               <div className="hidden sm:flex items-center gap-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-[11px] font-mono text-neutral-300">
                 <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>12,480 Active</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span>Spatial Radar</span>
                 </div>
                 <span className="text-neutral-600">/</span>
-                <span>Sector Delta: 0.12°</span>
+                <span>MapLibre GL Engine</span>
               </div>
               <button
                 onClick={() => {
@@ -855,12 +797,12 @@ export default function HomePage() {
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1.5 text-on-surface">
               <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
-              <span className="font-medium text-[12px]">All IR CTC Sectors Operational</span>
+              <span className="font-medium text-[12px]">Rail Telemetry Engine Active</span>
             </div>
             <span className="text-border">|</span>
-            <span className="font-mono text-[11px]">Synced 8s ago</span>
+            <span className="font-mono text-[11px]">RailRadar Feed Integration</span>
             <span className="text-border">|</span>
-            <span className="font-mono text-[11px]">NTES Latency: 42ms</span>
+            <span className="font-mono text-[11px]">MapLibre Vector Tiles</span>
           </div>
           <div className="flex items-center gap-5 text-[12px]">
             <a className="hover:text-on-surface transition-colors" href="#">Rail Grid Map</a>

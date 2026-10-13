@@ -149,6 +149,10 @@ export class JourneyService {
       throw new AppError('LIVE_NOT_FOUND', `No live data for train ${trainNumber}`, 404);
     }
 
+    if (runData && !runData.isLive) {
+      throw new AppError('LIVE_NOT_FOUND', `Live tracking is not active for train ${trainNumber} on service date ${serviceDate}`, 404);
+    }
+
     if (runData && live.latitude === 0 && live.longitude === 0) {
       const allStops = runData.allStops || [];
       const matchStn = allStops.find((s: any) => (s.stationCode || s.station?.code) === live.currentStationId);
