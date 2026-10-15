@@ -185,7 +185,97 @@ export type ErrorCode =
   | 'SHARE_CREATE_FAILED'
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
-  | 'RATE_LIMITED';
+  | 'RATE_LIMITED'
+  | 'INVALID_PNR'
+  | 'PNR_NOT_FOUND'
+  | 'PNR_FLUSHED'
+  | 'PNR_UNAVAILABLE';
+
+export interface PassengerStatus {
+  passengerNumber: number;
+  bookingStatus: string;
+  bookingCoach?: string | null;
+  bookingBerth?: string | number | null;
+  currentStatus: string;
+  coach: string | null;
+  berthNumber: string | number | null;
+  berthType: string | null;
+  confirmed: boolean;
+  age?: number | null;
+  gender?: string | null;
+}
+
+export interface CoachRakeItem {
+  position: number;
+  code: string;
+  classType: string;
+  className?: string;
+  category?: string;
+  totalBerths?: number;
+  hasSeats?: boolean;
+}
+
+export interface PnrFareDetails {
+  baseFare?: number | string | null;
+  surcharges?: number | string | null;
+  convenienceFee?: number | string | null;
+  cateringCharges?: number | string | null;
+  totalAmountPaid?: number | string | null;
+  transactionId?: string | null;
+  paymentMethod?: string | null;
+  perPassengerFare?: number | string | null;
+  breakdownSource?: string | null;
+}
+
+export interface PnrLiveTrainStatus {
+  trainNumber: string;
+  statusText: string;
+  isOnTime: boolean;
+  delayMinutes: number;
+  speedKmh?: number | null;
+  platform?: string | null;
+  locationNotice?: string | null;
+  journeyId?: string | null;
+}
+
+export interface PnrStatusResult {
+  pnr: string;
+  trainNumber: string;
+  trainName: string;
+  journeyDate: string;
+  sourceStationCode: string;
+  sourceStationName: string;
+  destinationStationCode: string;
+  destinationStationName: string;
+  departureTime?: string | null;
+  arrivalTime?: string | null;
+  departurePlatform?: string | null;
+  arrivalPlatform?: string | null;
+  duration?: string | null;
+  haltsCount?: number | null;
+  intermediateHalts?: Array<{ code: string; name?: string; time?: string }>;
+  travelClass: string;
+  travelClassName?: string;
+  quota: string;
+  quotaName?: string;
+  distanceKm?: number | string | null;
+  chartPrepared: boolean;
+  bookingStatus: string;
+  confirmationProbability?: number | null;
+  passengers: PassengerStatus[];
+  rakeComposition?: CoachRakeItem[];
+  userCoach?: string | null;
+  fare?: PnrFareDetails | null;
+  cancellationTerms?: {
+    summary?: string;
+    currentRefundValue?: number | string | null;
+  } | null;
+  liveTrainStatus?: PnrLiveTrainStatus | null;
+  telemetryFreshness?: {
+    source: string;
+    fetchedAt: string;
+  };
+}
 
 export interface ApiError {
   code: ErrorCode;

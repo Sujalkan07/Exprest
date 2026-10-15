@@ -427,12 +427,12 @@ export default function HomePage() {
               >
                 <span>Live Radar</span>
               </a>
-              <a
+              <Link
+                href="/pnr-status"
                 className="text-secondary hover:text-on-surface text-[13px] font-normal transition-colors py-1"
-                href="#status"
               >
-                Status
-              </a>
+                PNR Status
+              </Link>
               <Link
                 href="/settings"
                 className="text-secondary hover:text-on-surface text-[13px] font-normal transition-colors py-1"
@@ -807,7 +807,7 @@ export default function HomePage() {
           <div className="flex items-center gap-5 text-[12px]">
             <a className="hover:text-on-surface transition-colors" href="#">Rail Grid Map</a>
             <a className="hover:text-on-surface transition-colors" href="#">Telemetry API</a>
-            <a className="hover:text-on-surface transition-colors" href="#">Status</a>
+            <Link className="hover:text-on-surface transition-colors" href="/pnr-status">PNR Status</Link>
             <span className="font-mono text-[11px] text-neutral-400">Exprest Core v2.4.1</span>
           </div>
         </div>

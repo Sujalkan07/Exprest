@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { createStationPopupNode, createTrainMarkerNode } from './mapDOMUtils';
 
 interface StopInfo {
   stationId: string;
@@ -237,15 +238,14 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
           !stn.actualArrival ? (stn.delayMinutes || 0) : 0
         );
         
-        const popupHTML = `
-          <div style="font-family:'Inter', sans-serif;font-size:12px;padding:8px 12px;background:rgba(13,17,23,0.9);backdrop-filter:blur(8px);border-radius:8px;border:1px solid rgba(255,255,255,0.15);color:white;min-width:140px;">
-            <div style="font-weight:700;font-size:13px;color:#f8fafc;margin-bottom:2px">${stn.stationId} - ${stn.stationName || ''}</div>
-            <div style="color:#94a3b8;font-size:11px;">ETA ${actTimeStr}</div>
-          </div>
-        `;
+        const popupNode = createStationPopupNode({
+          stationId: stn.stationId,
+          stationName: stn.stationName,
+          etaStr: actTimeStr,
+        });
 
         const popup = new maplibregl.Popup({ offset: 12, closeButton: false, closeOnClick: true })
-          .setHTML(popupHTML);
+          .setDOMContent(popupNode);
 
         markerRoot.onkeydown = (e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -267,45 +267,15 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
         const speed = Math.round(currentPosition.speedKph || 0);
         const heading = Math.round(currentPosition.heading || 38);
         
-        const trainRoot = document.createElement('div');
-        trainRoot.className = 'train-marker-root';
-        trainRoot.style.cssText = 'display:flex; flex-direction:column; align-items:center; z-index:50; pointer-events:auto;';
-
         const nextStopTarget = stationList[currentStopIndex + 1];
         const nextEtaStr = formatTime(nextStopTarget?.actualArrival || nextStopTarget?.scheduledArrival);
 
-        const markerHTML = `
-          <div style="position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;" id="train-marker-core">
-            <div style="position:absolute;width:60px;height:60px;border-radius:50%;border:1px solid rgba(0, 229, 255, 0.4);animation:ping 2.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
-            <div style="position:absolute;width:40px;height:40px;border-radius:50%;border:2px solid rgba(0, 229, 255, 0.8);"></div>
-            <div style="position:relative;width:30px;height:30px;border-radius:50%;background:#0d1117;display:flex;align-items:center;justify-content:center;transform:rotate(${heading}deg);">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="#ffffff" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L22 22L12 18L2 22L12 2Z" fill="white"/>
-              </svg>
-            </div>
-          </div>
-          
-          <div style="margin-top:8px; display:flex; flex-direction:column; align-items:center;">
-            <div style="background:rgba(13,17,23,0.85);backdrop-filter:blur(4px);border:1px solid #00e5ff;border-radius:6px;padding:4px 8px;display:flex;align-items:center;gap:6px;box-shadow:0 4px 12px rgba(0,229,255,0.15); margin-bottom:4px;">
-              <span class="material-symbols-outlined" style="font-size:14px;color:#00e5ff;">my_location</span>
-              <div style="display:flex;flex-direction:column;line-height:1.2;">
-                <span style="font-size:10px;font-weight:700;color:white;text-transform:uppercase;">${currentPosition.nextStationName || 'Unknown'}</span>
-                <span style="font-size:9px;color:#00e5ff;font-weight:600;">ETA — ${nextEtaStr}</span>
-              </div>
-            </div>
-            
-            <div style="background:rgba(13,17,23,0.95);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;display:flex;align-items:center;gap:6px;">
-              <div style="width:6px;height:6px;border-radius:50%;background:#00e5ff;box-shadow:0 0 6px #00e5ff;"></div>
-              <div style="display:flex;flex-direction:column;line-height:1.1;">
-                <span style="font-size:9px;color:#94a3b8;font-weight:700;">#RAJDHANI</span>
-                <span style="font-size:12px;font-weight:800;color:white;">${speed} <span style="font-size:9px;color:#00e5ff;">km/h</span> <span style="font-size:9px;color:#94a3b8;font-weight:600;margin-left:4px;">BEARING ${heading}°</span></span>
-              </div>
-            </div>
-          </div>
-          <style>@keyframes ping{0%{transform:scale(0.8);opacity:1} 100%{transform:scale(1.8);opacity:0}}</style>
-        `;
-        
-        trainRoot.innerHTML = markerHTML;
+        const trainRoot = createTrainMarkerNode({
+          speed,
+          heading,
+          nextStationName: currentPosition.nextStationName,
+          nextEtaStr,
+        });
 
         trainMarkerRef.current = new maplibregl.Marker({ element: trainRoot, anchor: 'center' })
           .setLngLat([currentPosition.longitude, currentPosition.latitude])

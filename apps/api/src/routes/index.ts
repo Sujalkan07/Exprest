@@ -1,11 +1,13 @@
 import { FastifyInstance } from 'fastify';
 import { TrainService } from '../modules/trains/TrainService.js';
 import { JourneyService } from '../modules/journeys/JourneyService.js';
+import { PnrService } from '../modules/pnr/PnrService.js';
 import { AppError } from '../common/errors/AppError.js';
 
 export async function registerRoutes(fastify: FastifyInstance) {
   const trainService = new TrainService();
   const journeyService = new JourneyService();
+  const pnrService = new PnrService();
 
   const makeMeta = (reqId: string) => ({
     requestId: reqId,
@@ -215,6 +217,64 @@ export async function registerRoutes(fastify: FastifyInstance) {
         error: { code: 'RUN_NOT_FOUND', message: 'Shared journey not found.', retryable: false },
         meta: makeMeta(req.id)
       });
+    }
+  });
+
+  // PNR Status Lookup
+  fastify.get('/api/v1/pnr/:pnr', async (req, reply) => {
+    const { pnr } = req.params as { pnr: string };
+    try {
+      const data = await pnrService.getPnrStatus(pnr);
+      return { data, meta: makeMeta(req.id) };
+    } catch (err: any) {
+      if (err instanceof AppError) {
+        reply.status(err.statusCode).send(err.toResponse(req.id));
+      } else {
+        reply.status(500).send({
+          error: {
+            code: 'PROVIDER_TIMEOUT',
+            message: err?.message || 'PNR status lookup failed.',
+            retryable: true,
+          },
+          meta: makeMeta(req.id),
+        });
+      }
+    }
+  });
+
+  // Train Fare Lookup
+  fastify.get('/api/v1/trains/:trainNumber/fare', async (req, reply) => {
+    const { trainNumber } = req.params as { trainNumber: string };
+    const { from, to, date, class: classCode, quota } = req.query as {
+      from?: string;
+      to?: string;
+      date?: string;
+      class?: string;
+      quota?: string;
+    };
+    try {
+      const data = await pnrService.getTrainFare(
+        trainNumber,
+        from || '',
+        to || '',
+        date,
+        classCode,
+        quota
+      );
+      return { data, meta: makeMeta(req.id) };
+    } catch (err: any) {
+      if (err instanceof AppError) {
+        reply.status(err.statusCode).send(err.toResponse(req.id));
+      } else {
+        reply.status(500).send({
+          error: {
+            code: 'PROVIDER_TIMEOUT',
+            message: err?.message || 'Train fare lookup failed.',
+            retryable: true,
+          },
+          meta: makeMeta(req.id),
+        });
+      }
     }
   });
 }

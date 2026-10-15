@@ -1,4 +1,15 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+
+// Load .env from process.cwd() or apps/api/.env
+if (fs.existsSync(path.resolve(process.cwd(), '.env'))) {
+  dotenv.config();
+} else if (fs.existsSync(path.resolve(process.cwd(), 'apps/api/.env'))) {
+  dotenv.config({ path: path.resolve(process.cwd(), 'apps/api/.env') });
+} else {
+  dotenv.config();
+}
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';

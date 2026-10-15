@@ -73,6 +73,9 @@ export const TopBar: React.FC = () => {
           <Link href="/saved" className="text-text-secondary hover:text-text transition-colors">
             Saved
           </Link>
+          <Link href="/pnr-status" className="text-text-secondary hover:text-text transition-colors">
+            PNR Status
+          </Link>
           <Link href="/settings" className="text-text-secondary hover:text-text transition-colors">
             Settings
           </Link>
