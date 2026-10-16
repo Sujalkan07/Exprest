@@ -267,9 +267,10 @@ export default function PnrStatusPage() {
                 cateringCharges,
                 totalAmountPaid,
                 perPassengerFare: Number(b.totalFare) || null,
-                transactionId: prev.fare?.transactionId || `PRS-${prev.pnr}`,
-                paymentMethod: prev.fare?.paymentMethod || 'Online Gateway / Verified via PRS',
+                transactionId: prev.fare?.transactionId || null,
+                paymentMethod: prev.fare?.paymentMethod || null,
                 breakdownSource: json?.data?.source || 'railradar_prs',
+                isEstimated: true,
               },
             };
           });
@@ -1241,9 +1242,16 @@ export default function PnrStatusPage() {
                   {/* 11. Confirmation & Fare Summary Widget */}
                   <div className="rounded-xl bg-surface-elevated shadow-sm p-space-lg flex flex-col gap-space-md border border-border">
                     <div className="flex items-center justify-between">
-                      <h3 className="font-heading-md text-heading-md font-semibold text-on-surface">
-                        Fare &amp; Booking Details
-                      </h3>
+                      <div className="flex items-center gap-space-xs">
+                        <h3 className="font-heading-md text-heading-md font-semibold text-on-surface">
+                          Fare &amp; Booking Details
+                        </h3>
+                        {pnrData.fare?.isEstimated && (
+                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                            Estimated Tariff
+                          </span>
+                        )}
+                      </div>
                       <span className="material-symbols-outlined text-outline text-[20px]">receipt_long</span>
                     </div>
 
@@ -1316,10 +1324,10 @@ export default function PnrStatusPage() {
 
                     <div className="p-space-sm rounded bg-surface-container-low text-text-tertiary font-label text-label flex flex-col gap-0.5 border border-border/30">
                       <span>
-                        Transaction ID: <strong>{pnrData.fare?.transactionId || `PRS-${pnrData.pnr}`}</strong>
+                        Transaction ID: <strong>{pnrData.fare?.transactionId || 'Not provided by PRS (Direct booking lookup)'}</strong>
                       </span>
                       <span>
-                        Payment Method: <strong>{pnrData.fare?.paymentMethod || 'Online Gateway / Verified via PRS'}</strong>
+                        Payment Method: <strong>{pnrData.fare?.paymentMethod || 'PRS Standard Reservation / Verified Gateway'}</strong>
                       </span>
                     </div>
                   </div>
@@ -1336,7 +1344,9 @@ export default function PnrStatusPage() {
                     <div className="p-space-sm rounded bg-surface-container flex items-center justify-between font-label text-label">
                       <span className="text-on-surface-variant">Current Refund Value:</span>
                       <span className="font-bold text-on-surface">
-                        {pnrData.cancellationTerms?.currentRefundValue ? `₹${pnrData.cancellationTerms.currentRefundValue}` : '₹5,985'}
+                        {pnrData.cancellationTerms?.currentRefundValue != null
+                          ? `₹${Number(pnrData.cancellationTerms.currentRefundValue).toLocaleString('en-IN')}`
+                          : 'Calculated per IRCTC cancellation rules'}
                       </span>
                     </div>
                   </div>

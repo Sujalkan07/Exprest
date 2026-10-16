@@ -173,7 +173,10 @@ describe('PNR Status API & Validation Suite', () => {
         assert.equal(res.passengers[0].coach, 'B4');
         assert.equal(res.passengers[0].berthNumber, 32);
         assert.equal(res.passengers[0].confirmed, true);
+        assert.equal(res.passengers[0].age, null, 'Passenger age must be redacted for privacy');
+        assert.equal(res.passengers[0].gender, null, 'Passenger gender must be redacted for privacy');
         assert.equal(res.fare?.totalAmountPaid, 6435);
+        assert.equal(res.fare?.isEstimated, false);
         assert.equal(res.rakeComposition?.length, 2);
       } finally {
         globalThis.fetch = originalFetch;
@@ -501,7 +504,8 @@ describe('PNR Status API & Validation Suite', () => {
         assert.equal(result.fare?.surcharges, (40 + 45 + 728) * 2);
         assert.equal(result.fare?.convenienceFee, (132 * 2) + 35);
         assert.equal(result.fare?.totalAmountPaid, (3165 * 2) + 35);
-        assert.equal(result.fare?.transactionId, 'PRS-6248193042');
+        assert.equal(result.fare?.transactionId, null);
+        assert.equal(result.fare?.isEstimated, true);
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -565,5 +569,25 @@ describe('PNR Status API & Validation Suite', () => {
       }
     });
   });
-});
 
+  describe('7. Dedicated PNR Endpoint Rate Limiting (B2/B5)', () => {
+    it('enforces route-level rate limiting on /api/v1/pnr/:pnr', async () => {
+      const app = Fastify();
+      const rateLimitPlugin = (await import('@fastify/rate-limit')).default;
+      await app.register(rateLimitPlugin, { max: 100, timeWindow: '1 minute' });
+      await registerRoutes(app);
+
+      let lastStatus = 200;
+      for (let i = 0; i < 12; i++) {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/v1/pnr/invalid',
+        });
+        lastStatus = res.statusCode;
+      }
+
+      assert.equal(lastStatus, 429, '11th request must trigger 429 rate limit');
+      await app.close();
+    });
+  });
+});

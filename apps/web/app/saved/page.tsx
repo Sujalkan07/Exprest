@@ -18,17 +18,50 @@ export default function SavedPage() {
     try {
       const stored = localStorage.getItem('exprest_recent_searches');
       if (stored) {
-        setSavedTrains(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const valid: SavedTrain[] = parsed
+            .filter(
+              (t): t is Record<string, any> =>
+                Boolean(t && typeof t === 'object' && (t.number || t.trainNumber))
+            )
+            .map((t) => {
+              const num = String(t.number || t.trainNumber || '');
+              const date = typeof t.date === 'string' ? t.date : '';
+              const journeyId =
+                typeof t.journeyId === 'string' && t.journeyId
+                  ? t.journeyId
+                  : date
+                  ? `journey_${num}_${date}`
+                  : '';
+              return {
+                number: num,
+                name: String(t.name || `Train ${num}`),
+                journeyId,
+                date: date || 'Recent',
+              };
+            });
+          setSavedTrains(valid);
+        } else {
+          setSavedTrains([]);
+        }
       }
     } catch {
-      // ignore
+      setSavedTrains([]);
     }
   }, []);
 
-  const removeTrain = (number: string) => {
-    const updated = savedTrains.filter(t => t.number !== number);
+  const removeTrain = (stableId: string) => {
+    const updated = savedTrains.filter((t, idx) => {
+      const id = t.journeyId || `${t.number}_${t.date}_${idx}`;
+      return id !== stableId;
+    });
     setSavedTrains(updated);
-    try { localStorage.setItem('exprest_recent_searches', JSON.stringify(updated)); } catch {}
+    try {
+      localStorage.setItem('exprest_recent_searches', JSON.stringify(updated));
+    } catch {
+      // Storage unavailable or quota exceeded
+    }
   };
 
   // IST date: Asia/Kolkata timezone prevents UTC midnight boundary skew
@@ -55,33 +88,48 @@ export default function SavedPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {savedTrains.map((train) => (
-              <div key={train.number} className="p-4 bg-surface-elevated border border-border rounded-card shadow-sm flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-accent">{train.number}</span>
-                    <span className="font-bold text-text">{train.name}</span>
-                  </div>
-                  <div className="text-xs text-text-tertiary mt-1">Last searched: {train.date}</div>
-                </div>
+            {savedTrains.map((train, idx) => {
+              const stableId = train.journeyId || `${train.number}_${train.date}_${idx}`;
+              const targetHref = train.journeyId
+                ? `/journey/${train.journeyId}`
+                : `/journey/journey_${train.number}_${
+                    train.date && train.date !== 'Recent' ? train.date : today
+                  }`;
+              const isToday = train.date === today;
 
-                <div className="flex items-center gap-3">
-                  <Link
-                    href={`/journey/journey_${train.number}_${today}`}
-                    className="px-3 py-1.5 bg-accent text-white text-xs font-semibold rounded-control hover:bg-black transition-colors"
-                  >
-                    Track Today
-                  </Link>
-                  <button
-                    onClick={() => removeTrain(train.number)}
-                    className="text-xs text-text-tertiary hover:text-red-500 transition-colors px-2 py-1"
-                    title="Remove"
-                  >
-                    ✕
-                  </button>
+              return (
+                <div
+                  key={stableId}
+                  className="p-4 bg-surface-elevated border border-border rounded-card shadow-sm flex items-center justify-between"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-accent">{train.number}</span>
+                      <span className="font-bold text-text">{train.name}</span>
+                    </div>
+                    <div className="text-xs text-text-tertiary mt-1">
+                      Service date: {train.date}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <Link
+                      href={targetHref}
+                      className="px-3 py-1.5 bg-accent text-white text-xs font-semibold rounded-control hover:bg-black transition-colors"
+                    >
+                      {isToday ? 'Track Today' : 'View Journey'}
+                    </Link>
+                    <button
+                      onClick={() => removeTrain(stableId)}
+                      className="text-xs text-text-tertiary hover:text-red-500 transition-colors px-2 py-1"
+                      title="Remove from saved"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>

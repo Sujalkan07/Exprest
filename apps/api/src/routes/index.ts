@@ -3,6 +3,18 @@ import { TrainService } from '../modules/trains/TrainService.js';
 import { JourneyService } from '../modules/journeys/JourneyService.js';
 import { PnrService } from '../modules/pnr/PnrService.js';
 import { AppError } from '../common/errors/AppError.js';
+import { parseOptionalAuth, requireAuth } from '../common/middleware/auth.js';
+import {
+  trainSearchQuerySchema,
+  journeyParamSchema,
+  poiQuerySchema,
+  createShareBodySchema,
+  shareParamSchema,
+  pnrParamSchema,
+  trainFareParamSchema,
+  trainFareQuerySchema,
+  validateInput,
+} from '../common/validation/schemas.js';
 
 export async function registerRoutes(fastify: FastifyInstance) {
   const trainService = new TrainService();
@@ -11,13 +23,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
 
   const makeMeta = (reqId: string) => ({
     requestId: reqId,
-    generatedAt: new Date().toISOString()
+    generatedAt: new Date().toISOString(),
   });
+
+  // Attach optional authentication parsing to all incoming requests
+  fastify.addHook('preHandler', parseOptionalAuth);
 
   // Train Search (PRD §7.2)
   fastify.get('/api/v1/trains/search', async (req, reply) => {
-    const { q } = req.query as { q?: string };
     try {
+      const { q } = validateInput(trainSearchQuerySchema, req.query);
       const items = await trainService.searchTrains(q || '');
       return { data: items, meta: makeMeta(req.id) };
     } catch (err: any) {
@@ -26,7 +41,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
       } else {
         reply.status(500).send({
           error: { code: 'PROVIDER_TIMEOUT', message: err.message, retryable: true },
-          meta: makeMeta(req.id)
+          meta: makeMeta(req.id),
         });
       }
     }
@@ -34,8 +49,8 @@ export async function registerRoutes(fastify: FastifyInstance) {
 
   // Journey Canonical Details (PRD §7.3)
   fastify.get('/api/v1/journeys/:journeyId', async (req, reply) => {
-    const { journeyId } = req.params as { journeyId: string };
     try {
+      const { journeyId } = validateInput(journeyParamSchema, req.params);
       const data = await journeyService.getJourneyDetails(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
@@ -44,7 +59,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
       } else {
         reply.status(500).send({
           error: { code: 'RUN_NOT_FOUND', message: 'Journey not found.', retryable: false },
-          meta: makeMeta(req.id)
+          meta: makeMeta(req.id),
         });
       }
     }
@@ -52,8 +67,8 @@ export async function registerRoutes(fastify: FastifyInstance) {
 
   // Live Journey Status (PRD §7.4)
   fastify.get('/api/v1/journeys/:journeyId/live', async (req, reply) => {
-    const { journeyId } = req.params as { journeyId: string };
     try {
+      const { journeyId } = validateInput(journeyParamSchema, req.params);
       const data = await journeyService.getLiveStatus(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
@@ -62,7 +77,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
       } else {
         reply.status(404).send({
           error: { code: 'LIVE_NOT_FOUND', message: err?.message || 'No live data found.', retryable: false },
-          meta: makeMeta(req.id)
+          meta: makeMeta(req.id),
         });
       }
     }
@@ -70,7 +85,22 @@ export async function registerRoutes(fastify: FastifyInstance) {
 
   // Live Stream SSE (PRD §7.5)
   fastify.get('/api/v1/journeys/:journeyId/stream', (req, reply) => {
-    const { journeyId } = req.params as { journeyId: string };
+    let journeyId: string;
+    try {
+      const validated = validateInput(journeyParamSchema, req.params);
+      journeyId = validated.journeyId;
+    } catch (err: any) {
+      if (err instanceof AppError) {
+        reply.status(err.statusCode).send(err.toResponse(req.id));
+      } else {
+        reply.status(400).send({
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid journeyId parameter', retryable: false },
+          meta: makeMeta(req.id),
+        });
+      }
+      return;
+    }
+
     reply.raw.setHeader('Content-Type', 'text/event-stream');
     reply.raw.setHeader('Cache-Control', 'no-cache');
     reply.raw.setHeader('Connection', 'keep-alive');
@@ -100,16 +130,29 @@ export async function registerRoutes(fastify: FastifyInstance) {
 
     const interval = setInterval(sendUpdate, 15000);
 
+    // Safeguard against zombie connections (auto-terminate after 30 minutes in production, 100ms in test)
+    const streamTimeoutMs = process.env.NODE_ENV === 'test' ? 100 : 30 * 60 * 1000;
+    const maxLifetimeTimeout = setTimeout(() => {
+      isClosed = true;
+      clearInterval(interval);
+      try {
+        reply.raw.end();
+      } catch {
+        // Ignored
+      }
+    }, streamTimeoutMs);
+
     req.raw.on('close', () => {
       isClosed = true;
       clearInterval(interval);
+      clearTimeout(maxLifetimeTimeout);
     });
   });
 
   // Journey Analytics (PRD §7.7)
   fastify.get('/api/v1/journeys/:journeyId/analytics', async (req, reply) => {
-    const { journeyId } = req.params as { journeyId: string };
     try {
+      const { journeyId } = validateInput(journeyParamSchema, req.params);
       const data = await journeyService.getAnalytics(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
@@ -118,7 +161,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
       } else {
         reply.status(500).send({
           error: { code: 'RUN_NOT_FOUND', message: err?.message || 'Analytics unavailable.', retryable: false },
-          meta: makeMeta(req.id)
+          meta: makeMeta(req.id),
         });
       }
     }
@@ -126,8 +169,8 @@ export async function registerRoutes(fastify: FastifyInstance) {
 
   // Journey Weather (PRD §7.9)
   fastify.get('/api/v1/journeys/:journeyId/weather', async (req, reply) => {
-    const { journeyId } = req.params as { journeyId: string };
     try {
+      const { journeyId } = validateInput(journeyParamSchema, req.params);
       const data = await journeyService.getWeather(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
@@ -136,7 +179,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
       } else {
         reply.status(500).send({
           error: { code: 'WEATHER_UNAVAILABLE', message: err?.message || 'Weather unavailable.', retryable: true },
-          meta: makeMeta(req.id)
+          meta: makeMeta(req.id),
         });
       }
     }
@@ -144,58 +187,82 @@ export async function registerRoutes(fastify: FastifyInstance) {
 
   // Nearby POIs (PRD §7.11)
   fastify.get('/api/v1/journeys/:journeyId/pois', async (req, reply) => {
-    const { journeyId } = req.params as { journeyId: string };
-    const { category } = req.query as { category?: string };
     try {
+      const { journeyId } = validateInput(journeyParamSchema, req.params);
+      const { category } = validateInput(poiQuerySchema, req.query);
       const data = await journeyService.getPois(journeyId, category);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
-      reply.status(500).send({
-        error: { code: 'POI_UNAVAILABLE', message: err?.message || 'POIs unavailable.', retryable: true },
-        meta: makeMeta(req.id)
-      });
+      if (err instanceof AppError) {
+        reply.status(err.statusCode).send(err.toResponse(req.id));
+      } else {
+        reply.status(500).send({
+          error: { code: 'POI_UNAVAILABLE', message: err?.message || 'POIs unavailable.', retryable: true },
+          meta: makeMeta(req.id),
+        });
+      }
     }
   });
 
-  // Share Creation (PRD §7.14)
-  fastify.post('/api/v1/shares', async (req, reply) => {
-    const { journeyId } = (req.body as { journeyId?: string }) || {};
-    if (!journeyId) {
-      reply.status(400).send({
-        error: { code: 'INVALID_JOURNEY_ID', message: 'journeyId is required', retryable: false },
-        meta: makeMeta(req.id)
-      });
-      return;
-    }
-
-    try {
-      // Validate that the requested journey exists
-      await journeyService.getJourneyDetails(journeyId);
-    } catch (err: any) {
-      reply.status(404).send({
-        error: { code: 'RUN_NOT_FOUND', message: 'Cannot share non-existent journey', retryable: false },
-        meta: makeMeta(req.id)
-      });
-      return;
-    }
-
-    const publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000';
-    return {
-      data: {
-        shareToken: journeyId,
-        url: `${publicAppUrl}/share/${encodeURIComponent(journeyId)}`,
-        createdAt: new Date().toISOString(),
-        persistent: false,
-        note: 'Direct link to journey. Persistent custom tokens require database configuration.'
+  // Share Creation (PRD §7.14) — Authenticated resource creation (A1)
+  fastify.post(
+    '/api/v1/shares',
+    {
+      preHandler: [requireAuth],
+      config: {
+        rateLimit: {
+          max: 20,
+          timeWindow: '1 minute',
+        },
       },
-      meta: makeMeta(req.id)
-    };
-  });
+    },
+    async (req, reply) => {
+      let journeyId: string;
+      try {
+        const validated = validateInput(createShareBodySchema, req.body);
+        journeyId = validated.journeyId;
+      } catch (err: any) {
+        if (err instanceof AppError) {
+          reply.status(err.statusCode).send(err.toResponse(req.id));
+        } else {
+          reply.status(400).send({
+            error: { code: 'INVALID_JOURNEY_ID', message: 'journeyId is required and must be valid', retryable: false },
+            meta: makeMeta(req.id),
+          });
+        }
+        return;
+      }
+
+      try {
+        // Validate that the requested journey exists
+        await journeyService.getJourneyDetails(journeyId);
+      } catch (err: any) {
+        reply.status(404).send({
+          error: { code: 'RUN_NOT_FOUND', message: 'Cannot share non-existent journey', retryable: false },
+          meta: makeMeta(req.id),
+        });
+        return;
+      }
+
+      const publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000';
+      return {
+        data: {
+          shareToken: journeyId,
+          url: `${publicAppUrl}/share/${encodeURIComponent(journeyId)}`,
+          createdByUserId: req.user?.id || null,
+          createdAt: new Date().toISOString(),
+          persistent: false,
+          note: 'Direct link to journey. Persistent custom tokens require database configuration.',
+        },
+        meta: makeMeta(req.id),
+      };
+    }
+  );
 
   // Share Resolution
   fastify.get('/api/v1/shares/:shareToken', async (req, reply) => {
-    const { shareToken } = req.params as { shareToken: string };
     try {
+      const { shareToken } = validateInput(shareParamSchema, req.params);
       // If the shareToken is or contains a journeyId, resolve it directly
       const journeyId = shareToken.startsWith('journey_') ? shareToken : null;
       if (!journeyId) {
@@ -203,9 +270,9 @@ export async function registerRoutes(fastify: FastifyInstance) {
           error: {
             code: 'RUN_NOT_FOUND',
             message: 'Custom share token not found. Persistent share links require database configuration.',
-            retryable: false
+            retryable: false,
           },
-          meta: makeMeta(req.id)
+          meta: makeMeta(req.id),
         });
         return;
       }
@@ -213,68 +280,91 @@ export async function registerRoutes(fastify: FastifyInstance) {
       const data = await journeyService.getJourneyDetails(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
-      reply.status(404).send({
-        error: { code: 'RUN_NOT_FOUND', message: 'Shared journey not found.', retryable: false },
-        meta: makeMeta(req.id)
-      });
-    }
-  });
-
-  // PNR Status Lookup
-  fastify.get('/api/v1/pnr/:pnr', async (req, reply) => {
-    const { pnr } = req.params as { pnr: string };
-    try {
-      const data = await pnrService.getPnrStatus(pnr);
-      return { data, meta: makeMeta(req.id) };
-    } catch (err: any) {
       if (err instanceof AppError) {
         reply.status(err.statusCode).send(err.toResponse(req.id));
       } else {
-        reply.status(500).send({
-          error: {
-            code: 'PROVIDER_TIMEOUT',
-            message: err?.message || 'PNR status lookup failed.',
-            retryable: true,
-          },
+        reply.status(404).send({
+          error: { code: 'RUN_NOT_FOUND', message: 'Shared journey not found.', retryable: false },
           meta: makeMeta(req.id),
         });
       }
     }
   });
 
-  // Train Fare Lookup
-  fastify.get('/api/v1/trains/:trainNumber/fare', async (req, reply) => {
-    const { trainNumber } = req.params as { trainNumber: string };
-    const { from, to, date, class: classCode, quota } = req.query as {
-      from?: string;
-      to?: string;
-      date?: string;
-      class?: string;
-      quota?: string;
-    };
-    try {
-      const data = await pnrService.getTrainFare(
-        trainNumber,
-        from || '',
-        to || '',
-        date,
-        classCode,
-        quota
-      );
-      return { data, meta: makeMeta(req.id) };
-    } catch (err: any) {
-      if (err instanceof AppError) {
-        reply.status(err.statusCode).send(err.toResponse(req.id));
-      } else {
-        reply.status(500).send({
-          error: {
-            code: 'PROVIDER_TIMEOUT',
-            message: err?.message || 'Train fare lookup failed.',
-            retryable: true,
-          },
-          meta: makeMeta(req.id),
-        });
+  // PNR Status Lookup with dedicated strict rate limit (10 lookups / min / IP)
+  fastify.get(
+    '/api/v1/pnr/:pnr',
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const { pnr } = validateInput(pnrParamSchema, req.params, 'INVALID_PNR');
+        const data = await pnrService.getPnrStatus(pnr);
+        return { data, meta: makeMeta(req.id) };
+      } catch (err: any) {
+        if (err instanceof AppError) {
+          reply.status(err.statusCode).send(err.toResponse(req.id));
+        } else {
+          reply.status(500).send({
+            error: {
+              code: 'PROVIDER_TIMEOUT',
+              message: err?.message || 'PNR status lookup failed.',
+              retryable: true,
+            },
+            meta: makeMeta(req.id),
+          });
+        }
       }
     }
-  });
+  );
+
+  // Train Fare Lookup with dedicated rate limit (30 requests / min / IP)
+  fastify.get(
+    '/api/v1/trains/:trainNumber/fare',
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const { trainNumber } = validateInput(trainFareParamSchema, req.params);
+        const { from, to, date, class: classCode, quota } = validateInput(
+          trainFareQuerySchema,
+          req.query
+        );
+        const data = await pnrService.getTrainFare(
+          trainNumber,
+          from || '',
+          to || '',
+          date,
+          classCode,
+          quota
+        );
+        return { data, meta: makeMeta(req.id) };
+      } catch (err: any) {
+        if (err instanceof AppError) {
+          reply.status(err.statusCode).send(err.toResponse(req.id));
+        } else {
+          reply.status(500).send({
+            error: {
+              code: 'PROVIDER_TIMEOUT',
+              message: err?.message || 'Train fare lookup failed.',
+              retryable: true,
+            },
+            meta: makeMeta(req.id),
+          });
+        }
+      }
+    }
+  );
 }

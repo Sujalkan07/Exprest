@@ -3,6 +3,7 @@ import { OpenWeatherAdapter } from '../../providers/openweather/OpenWeatherAdapt
 import { OpenTopographyAdapter } from '../../providers/opentopography/OpenTopographyAdapter.js';
 import { OverpassAdapter } from '../../providers/overpass/OverpassAdapter.js';
 import { AppError } from '../../common/errors/AppError.js';
+import { isValidCalendarDate } from '../../common/validation/schemas.js';
 
 /**
  * Parse journeyId format: journey_{trainNumber}_{date}
@@ -15,6 +16,14 @@ function parseJourneyId(journeyId: string): { trainNumber: string; serviceDate: 
   }
   const trainNumber = parts[1];
   const serviceDate = parts.slice(2).join('_'); // date portion: 2026-09-26
+
+  if (!/^\d{4,5}$/.test(trainNumber)) {
+    throw new AppError('INVALID_JOURNEY_ID', `Invalid train number in journeyId: ${trainNumber}`, 400);
+  }
+  if (!isValidCalendarDate(serviceDate)) {
+    throw new AppError('INVALID_JOURNEY_ID', `Invalid or impossible service date in journeyId: ${serviceDate}`, 400);
+  }
+
   return { trainNumber, serviceDate };
 }
 
@@ -88,18 +97,23 @@ export class JourneyService {
     if (livePosition && livePosition.latitude === 0 && livePosition.longitude === 0) {
       const allStops = runData.allStops || [];
       const matchStn = allStops.find((s: any) => (s.stationCode || s.station?.code) === livePosition?.currentStationId);
-      if (matchStn && matchStn.station?.lat) {
+      if (matchStn && matchStn.station?.lat && matchStn.station.lat !== 0) {
         livePosition = {
           ...livePosition,
           latitude: matchStn.station.lat,
           longitude: matchStn.station.lng,
-        };
-      } else if (currentStop) {
+          isStationFallback: true,
+        } as any;
+      } else if (currentStop && currentStop.stationLat && currentStop.stationLat !== 0) {
         livePosition = {
           ...livePosition,
-          latitude: currentStop.stationLat || 0,
-          longitude: currentStop.stationLon || 0,
-        };
+          latitude: currentStop.stationLat,
+          longitude: currentStop.stationLon,
+          isStationFallback: true,
+        } as any;
+      } else {
+        // Zero coordinates must never be reported as valid live position
+        livePosition = null;
       }
     }
 
@@ -156,14 +170,24 @@ export class JourneyService {
     if (runData && live.latitude === 0 && live.longitude === 0) {
       const allStops = runData.allStops || [];
       const matchStn = allStops.find((s: any) => (s.stationCode || s.station?.code) === live.currentStationId);
-      if (matchStn && matchStn.station?.lat) {
+      if (matchStn && matchStn.station?.lat && matchStn.station.lat !== 0) {
         live.latitude = matchStn.station.lat;
         live.longitude = matchStn.station.lng;
+        (live as any).isStationFallback = true;
       } else {
         const currentStn = runData.stops.find((s: any) => s.stationId === live.currentStationId);
-        if (currentStn) {
-          live.latitude = currentStn.stationLat || 0;
-          live.longitude = currentStn.stationLon || 0;
+        if (
+          currentStn &&
+          typeof currentStn.stationLat === 'number' &&
+          typeof currentStn.stationLon === 'number' &&
+          currentStn.stationLat !== 0
+        ) {
+          live.latitude = currentStn.stationLat;
+          live.longitude = currentStn.stationLon;
+          (live as any).isStationFallback = true;
+        } else {
+          live.latitude = null as any;
+          live.longitude = null as any;
         }
       }
     }
@@ -225,7 +249,8 @@ export class JourneyService {
     });
 
     const totalDistanceKm = runData.stops[runData.stops.length - 1]?.distanceKm || 0;
-    const delayMinutes = live?.delayMinutes || 0;
+    // Historical runs must not inherit live run delay
+    const delayMinutes = runData.isLive ? (live?.delayMinutes || 0) : ((runData.run as any)?.delayMinutes || 0);
 
     const departedCount = runData.stops.filter((s: any) => s.status === 'departed').length;
     const currentStn = runData.stops.find((s: any) => s.status === 'at-station')

@@ -764,8 +764,9 @@ export class RailRadarAdapter implements TrainProvider {
         berthNumber: berth,
         berthType,
         confirmed: isConfirmed,
-        age: typeof p.age === 'number' ? p.age : null,
-        gender: p.gender || null,
+        // PII Data Minimization (Phase 1): Redact age and gender from public response
+        age: null,
+        gender: null,
       };
     });
 
@@ -874,6 +875,7 @@ export class RailRadarAdapter implements TrainProvider {
         transactionId: d.fare.transactionId || null,
         paymentMethod: d.fare.paymentMethod || null,
         breakdownSource: 'provider_pnr',
+        isEstimated: false,
       };
     } else if (trainNum && passengers.length > 0) {
       try {
@@ -911,9 +913,11 @@ export class RailRadarAdapter implements TrainProvider {
             cateringCharges,
             totalAmountPaid,
             perPassengerFare: Number(b.totalFare) || null,
-            transactionId: d.fare?.transactionId || `PRS-${cleanPnr}`,
-            paymentMethod: d.fare?.paymentMethod || 'Online Gateway / Verified via PRS',
+            // Phase 1 Fare Integrity: Never fabricate synthetic transaction ID or payment method
+            transactionId: d.fare?.transactionId || null,
+            paymentMethod: d.fare?.paymentMethod || null,
             breakdownSource: fareData.source || 'railradar_prs',
+            isEstimated: true,
           };
         }
       } catch (fareErr) {

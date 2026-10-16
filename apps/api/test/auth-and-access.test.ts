@@ -5,6 +5,16 @@ import { RailRadarAdapter } from '../src/providers/railradar/RailRadarAdapter.js
 import { getCorsAllowedOrigins, normalizeOrigin } from '../src/cors.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import { verifyJwtToken, requireAuth, createTestToken } from '../src/common/middleware/auth.js';
+import {
+  validateInput,
+  journeyParamSchema,
+  trainFareParamSchema,
+  poiQuerySchema,
+  shareParamSchema,
+} from '../src/common/validation/schemas.js';
+import { AppError } from '../src/common/errors/AppError.js';
+import { buildApp } from '../src/app.js';
 
 describe('Authentication, Access Security & Provider Error Handling', () => {
 
@@ -325,6 +335,269 @@ describe('Authentication, Access Security & Provider Error Handling', () => {
       assert.deepEqual(safeLoadFromStorage('12345'), []);
       assert.deepEqual(safeLoadFromStorage('"plain string"'), []);
       assert.deepEqual(safeLoadFromStorage('{"not": "an array"}'), []);
+    });
+  });
+
+  describe('8. Fastify JWT & Bearer Authentication Verification (B1)', () => {
+    it('verifies valid signed JWT token and extracts user identity', () => {
+      const token = createTestToken({
+        sub: 'user-456-uuid',
+        email: 'passenger@exprest.rail',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      const user = verifyJwtToken(token);
+      assert.ok(user !== null, 'Valid token must produce authenticated user');
+      assert.equal(user?.id, 'user-456-uuid');
+      assert.equal(user?.email, 'passenger@exprest.rail');
+      assert.equal(user?.role, 'authenticated');
+    });
+
+    it('rejects expired JWT token', () => {
+      const expiredToken = createTestToken({
+        sub: 'user-456-uuid',
+        email: 'passenger@exprest.rail',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) - 300, // 5 minutes ago
+      });
+
+      const user = verifyJwtToken(expiredToken);
+      assert.equal(user, null, 'Expired token must return null');
+    });
+
+    it('rejects tampered or forged JWT signature', () => {
+      const validToken = createTestToken({
+        sub: 'user-456-uuid',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      // Tamper with payload
+      const parts = validToken.split('.');
+      const tamperedPayload = Buffer.from(JSON.stringify({ sub: 'admin-attacker', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
+      const forgedToken = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
+
+      const user = verifyJwtToken(forgedToken);
+      assert.equal(user, null, 'Tampered token must be rejected');
+    });
+
+    it('rejects malformed and random strings without throwing', () => {
+      assert.equal(verifyJwtToken(''), null);
+      assert.equal(verifyJwtToken('not.a.valid.jwt'), null);
+      assert.equal(verifyJwtToken('just_a_string'), null);
+      assert.equal(verifyJwtToken('header.payload'), null);
+    });
+
+    it('requireAuth middleware throws 401 UNAUTHORIZED when Authorization header is missing', async () => {
+      const mockReq = { headers: {} } as any;
+      const mockReply = {} as any;
+
+      await assert.rejects(
+        async () => requireAuth(mockReq, mockReply),
+        (err: any) => {
+          assert.equal(err instanceof AppError, true);
+          assert.equal(err.code, 'UNAUTHORIZED');
+          assert.equal(err.statusCode, 401);
+          return true;
+        }
+      );
+    });
+
+    it('requireAuth middleware accepts valid Bearer token and assigns req.user', async () => {
+      const token = createTestToken({
+        sub: 'valid-user-99',
+        email: 'ticket-holder@exprest.app',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      const mockReq = { headers: { authorization: `Bearer ${token}` } } as any;
+      const mockReply = {} as any;
+
+      await requireAuth(mockReq, mockReply);
+      assert.equal(mockReq.user?.id, 'valid-user-99');
+      assert.equal(mockReq.user?.email, 'ticket-holder@exprest.app');
+    });
+  });
+
+  describe('9. Runtime Input Validation via Zod Schemas (B4)', () => {
+    it('accepts valid journey ID pattern and rejects malicious characters', () => {
+      const valid = validateInput(journeyParamSchema, { journeyId: 'journey_12951_2026-10-24' });
+      assert.equal(valid.journeyId, 'journey_12951_2026-10-24');
+
+      // Rejects script injection
+      assert.throws(
+        () => validateInput(journeyParamSchema, { journeyId: '<script>alert(1)</script>' }),
+        (err: any) => err instanceof AppError && err.statusCode === 400
+      );
+
+      // Rejects path traversal
+      assert.throws(
+        () => validateInput(journeyParamSchema, { journeyId: '../../etc/passwd' }),
+        (err: any) => err instanceof AppError && err.statusCode === 400
+      );
+
+      // Rejects too short journey ID
+      assert.throws(
+        () => validateInput(journeyParamSchema, { journeyId: 'ab' }),
+        (err: any) => err instanceof AppError && err.statusCode === 400
+      );
+    });
+
+    it('accepts valid train numbers and rejects non-numeric or out-of-range inputs', () => {
+      const valid = validateInput(trainFareParamSchema, { trainNumber: '12951' });
+      assert.equal(valid.trainNumber, '12951');
+
+      const valid4 = validateInput(trainFareParamSchema, { trainNumber: '2433' });
+      assert.equal(valid4.trainNumber, '2433');
+
+      // Rejects alphabetic train numbers
+      assert.throws(
+        () => validateInput(trainFareParamSchema, { trainNumber: 'RAJ12' }),
+        (err: any) => err instanceof AppError && err.statusCode === 400
+      );
+
+      // Rejects single digit
+      assert.throws(
+        () => validateInput(trainFareParamSchema, { trainNumber: '1' }),
+        (err: any) => err instanceof AppError && err.statusCode === 400
+      );
+
+      // Rejects 7 digits
+      assert.throws(
+        () => validateInput(trainFareParamSchema, { trainNumber: '1234567' }),
+        (err: any) => err instanceof AppError && err.statusCode === 400
+      );
+    });
+
+    it('validates POI category query against allowed whitelist', () => {
+      const validFood = validateInput(poiQuerySchema, { category: 'food' });
+      assert.equal(validFood.category, 'food');
+
+      const validEmergency = validateInput(poiQuerySchema, { category: 'emergency' });
+      assert.equal(validEmergency.category, 'emergency');
+
+      // Rejects unknown category
+      assert.throws(
+        () => validateInput(poiQuerySchema, { category: 'unauthorized_category' }),
+        (err: any) => err instanceof AppError && err.statusCode === 400
+      );
+    });
+
+    it('validates shareToken parameter format', () => {
+      const valid = validateInput(shareParamSchema, { shareToken: 'journey_12951_2026-10-24' });
+      assert.equal(valid.shareToken, 'journey_12951_2026-10-24');
+
+      // Rejects HTML / script chars
+      assert.throws(
+        () => validateInput(shareParamSchema, { shareToken: '"><script>' }),
+        (err: any) => err instanceof AppError && err.statusCode === 400
+      );
+    });
+  });
+
+  describe('10. Share Creation User Binding & Auth Integration (B1/B4)', () => {
+    it('binds authenticated user id to share response when Bearer token is provided', async () => {
+      const app = await buildApp();
+      const token = createTestToken({
+        sub: 'usr-share-owner-789',
+        email: 'sharer@exprest.rail',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      // Mock journeyService.getJourneyDetails for share test
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/shares',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        payload: {
+          journeyId: 'journey_12951_2026-10-24',
+        },
+      });
+
+      assert.equal(res.statusCode, 200);
+      const shareBody = JSON.parse(res.payload);
+      assert.equal(shareBody.data.createdByUserId, 'usr-share-owner-789');
+
+      // Verify expired token is rejected with 401 on real Fastify route
+      const expiredToken = createTestToken({
+        sub: 'usr-share-owner-789',
+        exp: Math.floor(Date.now() / 1000) - 3600,
+      });
+      const expiredRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/shares',
+        headers: {
+          authorization: `Bearer ${expiredToken}`,
+          'content-type': 'application/json',
+        },
+        payload: { journeyId: 'journey_12951_2026-10-24' },
+      });
+      assert.equal(expiredRes.statusCode, 401);
+
+      // Verify tampered signature token is rejected with 401 on real Fastify route
+      const forgedToken = `${token.split('.')[0]}.${token.split('.')[1]}.invalidsignature`;
+      const forgedRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/shares',
+        headers: {
+          authorization: `Bearer ${forgedToken}`,
+          'content-type': 'application/json',
+        },
+        payload: { journeyId: 'journey_12951_2026-10-24' },
+      });
+      assert.equal(forgedRes.statusCode, 401);
+
+      // Even if journey 12951 not in memory, if it 404s it validates journeyId format first
+      // Let's verify input validation: invalid journeyId returns 400
+      const invalidRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/shares',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        payload: {
+          journeyId: '<invalid-journey-id>',
+        },
+      });
+      assert.equal(invalidRes.statusCode, 400);
+
+      await app.close();
+    });
+
+    it('strictly rejects unauthenticated POST /api/v1/shares with 401 UNAUTHORIZED', async () => {
+      const app = await buildApp();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/shares',
+        headers: {
+          'content-type': 'application/json',
+        },
+        payload: {
+          journeyId: 'journey_12951_2026-10-24',
+        },
+      });
+
+      assert.equal(res.statusCode, 401);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.error.code, 'UNAUTHORIZED');
+      await app.close();
+    });
+
+    it('preserves public access for intentional public endpoints without auth token', async () => {
+      const app = await buildApp();
+
+      const healthRes = await app.inject({ method: 'GET', url: '/health' });
+      assert.equal(healthRes.statusCode, 200);
+
+      const searchRes = await app.inject({ method: 'GET', url: '/api/v1/trains/search?q=12951' });
+      assert.equal(searchRes.statusCode, 200);
+
+      await app.close();
     });
   });
 });

@@ -6,6 +6,7 @@ import { usePathname, useParams } from 'next/navigation';
 import { TopBar } from '@/components/common/TopBar';
 import { StatusPill } from '@/components/common/StatusPill';
 import { useQuery } from '@tanstack/react-query';
+import { createClient } from '@/lib/supabase/client';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -49,9 +50,19 @@ export default function JourneyLayout({ children }: { children: React.ReactNode 
   const handleShareOpen = async () => {
     if (!shareToken) {
       try {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`;
+        }
+
         const res = await fetch(`${API_BASE}/api/v1/shares`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ journeyId }),
         });
         if (res.ok) {

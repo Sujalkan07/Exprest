@@ -172,6 +172,7 @@ export interface ApiResponse<T> {
 export type ErrorCode =
   | 'INVALID_QUERY'
   | 'INVALID_JOURNEY_ID'
+  | 'VALIDATION_ERROR'
   | 'TRAIN_NOT_FOUND'
   | 'RUN_NOT_FOUND'
   | 'LIVE_NOT_FOUND'
@@ -225,6 +226,7 @@ export interface PnrFareDetails {
   paymentMethod?: string | null;
   perPassengerFare?: number | string | null;
   breakdownSource?: string | null;
+  isEstimated?: boolean;
 }
 
 export interface PnrLiveTrainStatus {
