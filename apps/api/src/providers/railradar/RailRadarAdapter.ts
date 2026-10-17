@@ -749,10 +749,42 @@ export class RailRadarAdapter implements TrainProvider {
       const pNum = p.passengerSerialNumber || p.no || p.passengerNumber || idx + 1;
       const bStatus = p.bookingStatus || p.booking_status || 'CNF';
       const cStatus = p.currentStatus || p.current_status || bStatus;
-      const coach = p.currentCoach || p.coach || p.bookingCoach || null;
-      const berth = p.currentBerth || p.berthNumber || p.berth || p.bookingBerth || null;
-      const berthType = p.berthType || p.berth_type || null;
+      let coach = p.currentCoach || p.coach || p.bookingCoach || null;
+      let berth = p.currentBerth || p.berthNumber || p.berth || p.bookingBerth || null;
+      let berthType = p.berthType || p.berth_type || null;
+
+      // Extract coach & berth if encoded in status strings (e.g., "B4, 32", "CNF/B4/32/MB", "B4-32")
+      if (!coach || !berth) {
+        const statusToInspect = [cStatus, bStatus].filter(Boolean).join(' ');
+        const match = statusToInspect.match(/\b([A-Z]+[0-9]+)\s*[,/ -]\s*([0-9]{1,3})(?:\s*[,/ -]\s*([A-Z]{2}))?\b/i);
+        if (match) {
+          if (!coach) coach = match[1].toUpperCase();
+          if (!berth) berth = parseInt(match[2], 10);
+          if (!berthType && match[3]) berthType = match[3].toUpperCase();
+        }
+      }
+
+      if (coach && typeof coach === 'string') {
+        coach = coach.trim().toUpperCase();
+      }
+
+      let cleanBerth: number | string | null = null;
+      if (berth != null) {
+        const num = parseInt(String(berth).replace(/\D/g, ''), 10);
+        cleanBerth = !isNaN(num) && num > 0 ? num : berth;
+      }
+
       const isConfirmed = cStatus.toUpperCase().includes('CNF') || cStatus.toUpperCase().includes('CONFIRM');
+
+      // Infer standard Indian Railways berth type if numeric and missing
+      if (!berthType && typeof cleanBerth === 'number') {
+        const mod8 = cleanBerth % 8;
+        if (mod8 === 1 || mod8 === 4) berthType = 'LB';
+        else if (mod8 === 2 || mod8 === 5) berthType = 'MB';
+        else if (mod8 === 3 || mod8 === 6) berthType = 'UB';
+        else if (mod8 === 7) berthType = 'SL';
+        else if (mod8 === 0) berthType = 'SU';
+      }
 
       return {
         passengerNumber: pNum,
@@ -761,7 +793,7 @@ export class RailRadarAdapter implements TrainProvider {
         bookingBerth: p.bookingBerth || null,
         currentStatus: cStatus,
         coach,
-        berthNumber: berth,
+        berthNumber: cleanBerth,
         berthType,
         confirmed: isConfirmed,
         // PII Data Minimization (Phase 1): Redact age and gender from public response

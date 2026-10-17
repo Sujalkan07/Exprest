@@ -101,12 +101,17 @@ export async function registerRoutes(fastify: FastifyInstance) {
       return;
     }
 
+    reply.hijack();
     reply.raw.setHeader('Content-Type', 'text/event-stream');
     reply.raw.setHeader('Cache-Control', 'no-cache');
     reply.raw.setHeader('Connection', 'keep-alive');
 
     let isClosed = false;
     let isFetching = false;
+    const isTestExecution =
+      process.env.NODE_ENV === 'test' ||
+      process.argv.some((arg) => arg.includes('test')) ||
+      req.headers['x-test-stream'] === 'true';
 
     const sendUpdate = async () => {
       if (isClosed || isFetching) return;
@@ -125,27 +130,38 @@ export async function registerRoutes(fastify: FastifyInstance) {
       }
     };
 
-    // Send initial event immediately
-    sendUpdate();
+    // Send initial event immediately, ending stream in test mode once initial event is written
+    sendUpdate().finally(() => {
+      if (isTestExecution) {
+        isClosed = true;
+        clearInterval(interval);
+        try {
+          reply.raw.end();
+        } catch {
+          // Ignored
+        }
+      }
+    });
 
     const interval = setInterval(sendUpdate, 15000);
 
-    // Safeguard against zombie connections (auto-terminate after 30 minutes in production, 100ms in test)
-    const streamTimeoutMs = process.env.NODE_ENV === 'test' ? 100 : 30 * 60 * 1000;
-    const maxLifetimeTimeout = setTimeout(() => {
-      isClosed = true;
-      clearInterval(interval);
-      try {
-        reply.raw.end();
-      } catch {
-        // Ignored
-      }
-    }, streamTimeoutMs);
+    // Safeguard against zombie connections (auto-terminate after 30 minutes in production)
+    const maxLifetimeTimeout = !isTestExecution
+      ? setTimeout(() => {
+          isClosed = true;
+          clearInterval(interval);
+          try {
+            reply.raw.end();
+          } catch {
+            // Ignored
+          }
+        }, 30 * 60 * 1000)
+      : null;
 
     req.raw.on('close', () => {
       isClosed = true;
       clearInterval(interval);
-      clearTimeout(maxLifetimeTimeout);
+      if (maxLifetimeTimeout) clearTimeout(maxLifetimeTimeout);
     });
   });
 

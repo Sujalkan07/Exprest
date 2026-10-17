@@ -5,7 +5,15 @@ import { RailRadarAdapter } from '../src/providers/railradar/RailRadarAdapter.js
 import { getCorsAllowedOrigins, normalizeOrigin } from '../src/cors.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import { verifyJwtToken, requireAuth, createTestToken } from '../src/common/middleware/auth.js';
+import {
+  verifyJwtToken,
+  requireAuth,
+  createTestToken,
+  SUPABASE_CURRENT_ECC_KEY_ID,
+  SUPABASE_PREVIOUS_HS256_KEY_ID,
+  setTrustedJwks,
+  clearJwksCache,
+} from '../src/common/middleware/auth.js';
 import {
   validateInput,
   journeyParamSchema,
@@ -338,55 +346,165 @@ describe('Authentication, Access Security & Provider Error Handling', () => {
     });
   });
 
-  describe('8. Fastify JWT & Bearer Authentication Verification (B1)', () => {
-    it('verifies valid signed JWT token and extracts user identity', () => {
-      const token = createTestToken({
-        sub: 'user-456-uuid',
-        email: 'passenger@exprest.rail',
-        role: 'authenticated',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-      });
+  describe('8. Fastify JWT & Bearer Authentication Verification (Dual ES256 + HS256 Key Rotation)', () => {
+    it('verifies current ES256 (ECC P-256) Supabase JWT tokens via JWKS with key ID ee6ac6d7-bb37-4adb-833b-588711018d70', async () => {
+      const token = createTestToken(
+        {
+          sub: 'user-ecc-uuid-101',
+          email: 'ecc-passenger@exprest.rail',
+          role: 'authenticated',
+        },
+        {
+          alg: 'ES256',
+          kid: SUPABASE_CURRENT_ECC_KEY_ID,
+        }
+      );
 
-      const user = verifyJwtToken(token);
-      assert.ok(user !== null, 'Valid token must produce authenticated user');
-      assert.equal(user?.id, 'user-456-uuid');
-      assert.equal(user?.email, 'passenger@exprest.rail');
+      const user = await verifyJwtToken(token);
+      assert.ok(user !== null, 'Valid ES256 token must produce authenticated user');
+      assert.equal(user?.id, 'user-ecc-uuid-101');
+      assert.equal(user?.email, 'ecc-passenger@exprest.rail');
       assert.equal(user?.role, 'authenticated');
     });
 
-    it('rejects expired JWT token', () => {
-      const expiredToken = createTestToken({
-        sub: 'user-456-uuid',
-        email: 'passenger@exprest.rail',
-        role: 'authenticated',
-        exp: Math.floor(Date.now() / 1000) - 300, // 5 minutes ago
-      });
+    it('verifies previous HS256 tokens during rotation period with key ID 6dbf8698-bdff-4de3-ac82-b75bc50d312e', async () => {
+      const token = createTestToken(
+        {
+          sub: 'user-hs256-uuid-202',
+          email: 'hs256-passenger@exprest.rail',
+          role: 'authenticated',
+        },
+        {
+          alg: 'HS256',
+          kid: SUPABASE_PREVIOUS_HS256_KEY_ID,
+        }
+      );
 
-      const user = verifyJwtToken(expiredToken);
-      assert.equal(user, null, 'Expired token must return null');
+      const user = await verifyJwtToken(token);
+      assert.ok(user !== null, 'Valid HS256 token with previous kid must produce authenticated user');
+      assert.equal(user?.id, 'user-hs256-uuid-202');
+      assert.equal(user?.email, 'hs256-passenger@exprest.rail');
+      assert.equal(user?.role, 'authenticated');
     });
 
-    it('rejects tampered or forged JWT signature', () => {
-      const validToken = createTestToken({
-        sub: 'user-456-uuid',
-        role: 'authenticated',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-      });
+    it('verifies previous HS256 tokens when kid is omitted during transition', async () => {
+      const token = createTestToken(
+        {
+          sub: 'user-hs256-legacy-303',
+          email: 'legacy@exprest.rail',
+          role: 'authenticated',
+        },
+        {
+          alg: 'HS256',
+          kid: '', // empty kid
+        }
+      );
 
-      // Tamper with payload
+      const user = await verifyJwtToken(token);
+      assert.ok(user !== null, 'Valid HS256 token without kid must produce authenticated user');
+      assert.equal(user?.id, 'user-hs256-legacy-303');
+    });
+
+    it('rejects expired ES256 and HS256 tokens', async () => {
+      const expiredEs256 = createTestToken(
+        { sub: 'user-ecc-uuid-101' },
+        { alg: 'ES256', expiresInSeconds: -300 }
+      );
+      assert.equal(await verifyJwtToken(expiredEs256), null, 'Expired ES256 token must be rejected');
+
+      const expiredHs256 = createTestToken(
+        { sub: 'user-hs256-uuid-202' },
+        { alg: 'HS256', expiresInSeconds: -300 }
+      );
+      assert.equal(await verifyJwtToken(expiredHs256), null, 'Expired HS256 token must be rejected');
+    });
+
+    it('rejects tampered or forged ES256 signature', async () => {
+      const validToken = createTestToken(
+        { sub: 'user-ecc-uuid-101', role: 'authenticated' },
+        { alg: 'ES256', kid: SUPABASE_CURRENT_ECC_KEY_ID }
+      );
+
       const parts = validToken.split('.');
-      const tamperedPayload = Buffer.from(JSON.stringify({ sub: 'admin-attacker', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
+      const tamperedPayload = Buffer.from(
+        JSON.stringify({ sub: 'admin-attacker', exp: Math.floor(Date.now() / 1000) + 3600 })
+      ).toString('base64url');
       const forgedToken = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
 
-      const user = verifyJwtToken(forgedToken);
-      assert.equal(user, null, 'Tampered token must be rejected');
+      const user = await verifyJwtToken(forgedToken);
+      assert.equal(user, null, 'Tampered ES256 token must be rejected');
     });
 
-    it('rejects malformed and random strings without throwing', () => {
-      assert.equal(verifyJwtToken(''), null);
-      assert.equal(verifyJwtToken('not.a.valid.jwt'), null);
-      assert.equal(verifyJwtToken('just_a_string'), null);
-      assert.equal(verifyJwtToken('header.payload'), null);
+    it('rejects tampered or forged HS256 signature', async () => {
+      const validToken = createTestToken(
+        { sub: 'user-hs256-uuid-202', role: 'authenticated' },
+        { alg: 'HS256', kid: SUPABASE_PREVIOUS_HS256_KEY_ID }
+      );
+
+      const parts = validToken.split('.');
+      const tamperedPayload = Buffer.from(
+        JSON.stringify({ sub: 'admin-attacker', exp: Math.floor(Date.now() / 1000) + 3600 })
+      ).toString('base64url');
+      const forgedToken = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
+
+      const user = await verifyJwtToken(forgedToken);
+      assert.equal(user, null, 'Tampered HS256 token must be rejected');
+    });
+
+    it('rejects unsupported algorithms (alg: none, RS256, HS512)', async () => {
+      // 1. None algorithm attack
+      const noneHeader = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+      const payload = Buffer.from(
+        JSON.stringify({ sub: 'attacker', exp: Math.floor(Date.now() / 1000) + 3600 })
+      ).toString('base64url');
+      const noneToken = `${noneHeader}.${payload}.`;
+      assert.equal(await verifyJwtToken(noneToken), null, 'alg: none must be strictly rejected');
+
+      // 2. RS256 algorithm
+      const rs256Header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+      const rs256Token = `${rs256Header}.${payload}.some-fake-signature`;
+      assert.equal(await verifyJwtToken(rs256Token), null, 'alg: RS256 must be rejected');
+
+      // 3. HS512 algorithm
+      const hs512Header = Buffer.from(JSON.stringify({ alg: 'HS512', typ: 'JWT' })).toString('base64url');
+      const hs512Token = `${hs512Header}.${payload}.some-fake-signature`;
+      assert.equal(await verifyJwtToken(hs512Token), null, 'alg: HS512 must be rejected');
+    });
+
+    it('rejects algorithm confusion and mismatched key attacks', async () => {
+      // Attacker specifies HS256 but supplies the ECC key ID
+      const header = Buffer.from(
+        JSON.stringify({ alg: 'HS256', typ: 'JWT', kid: SUPABASE_CURRENT_ECC_KEY_ID })
+      ).toString('base64url');
+      const payload = Buffer.from(
+        JSON.stringify({ sub: 'attacker', exp: Math.floor(Date.now() / 1000) + 3600 })
+      ).toString('base64url');
+      const token = `${header}.${payload}.fakesig`;
+
+      assert.equal(
+        await verifyJwtToken(token),
+        null,
+        'HS256 token referencing ECC kid must be rejected'
+      );
+    });
+
+    it('rejects unknown or untrusted kid in ES256 header', async () => {
+      const token = createTestToken(
+        { sub: 'user-ecc-unknown' },
+        { alg: 'ES256', kid: 'unknown-untrusted-kid-999', registerInJwks: false }
+      );
+      assert.equal(
+        await verifyJwtToken(token),
+        null,
+        'ES256 token with untrusted kid must be rejected'
+      );
+    });
+
+    it('rejects malformed and random strings without throwing', async () => {
+      assert.equal(await verifyJwtToken(''), null);
+      assert.equal(await verifyJwtToken('not.a.valid.jwt'), null);
+      assert.equal(await verifyJwtToken('just_a_string'), null);
+      assert.equal(await verifyJwtToken('header.payload'), null);
     });
 
     it('requireAuth middleware throws 401 UNAUTHORIZED when Authorization header is missing', async () => {
@@ -404,19 +522,26 @@ describe('Authentication, Access Security & Provider Error Handling', () => {
       );
     });
 
-    it('requireAuth middleware accepts valid Bearer token and assigns req.user', async () => {
-      const token = createTestToken({
-        sub: 'valid-user-99',
-        email: 'ticket-holder@exprest.app',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-      });
+    it('requireAuth middleware accepts both valid ES256 and HS256 Bearer tokens and assigns req.user', async () => {
+      // 1. Current ES256 token
+      const es256Token = createTestToken(
+        { sub: 'valid-ecc-user', email: 'ecc@exprest.app' },
+        { alg: 'ES256', kid: SUPABASE_CURRENT_ECC_KEY_ID }
+      );
+      const reqEs256 = { headers: { authorization: `Bearer ${es256Token}` } } as any;
+      await requireAuth(reqEs256, {} as any);
+      assert.equal(reqEs256.user?.id, 'valid-ecc-user');
+      assert.equal(reqEs256.user?.email, 'ecc@exprest.app');
 
-      const mockReq = { headers: { authorization: `Bearer ${token}` } } as any;
-      const mockReply = {} as any;
-
-      await requireAuth(mockReq, mockReply);
-      assert.equal(mockReq.user?.id, 'valid-user-99');
-      assert.equal(mockReq.user?.email, 'ticket-holder@exprest.app');
+      // 2. Previous HS256 token
+      const hs256Token = createTestToken(
+        { sub: 'valid-hs256-user', email: 'hs256@exprest.app' },
+        { alg: 'HS256', kid: SUPABASE_PREVIOUS_HS256_KEY_ID }
+      );
+      const reqHs256 = { headers: { authorization: `Bearer ${hs256Token}` } } as any;
+      await requireAuth(reqHs256, {} as any);
+      assert.equal(reqHs256.user?.id, 'valid-hs256-user');
+      assert.equal(reqHs256.user?.email, 'hs256@exprest.app');
     });
   });
 
@@ -521,6 +646,24 @@ describe('Authentication, Access Security & Provider Error Handling', () => {
       assert.equal(res.statusCode, 200);
       const shareBody = JSON.parse(res.payload);
       assert.equal(shareBody.data.createdByUserId, 'usr-share-owner-789');
+
+      // Verify ES256 token on real Fastify route
+      const es256Token = createTestToken(
+        { sub: 'usr-share-owner-ecc-456' },
+        { alg: 'ES256', kid: SUPABASE_CURRENT_ECC_KEY_ID }
+      );
+      const es256Res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/shares',
+        headers: {
+          authorization: `Bearer ${es256Token}`,
+          'content-type': 'application/json',
+        },
+        payload: { journeyId: 'journey_12951_2026-10-24' },
+      });
+      assert.equal(es256Res.statusCode, 200);
+      const es256Body = JSON.parse(es256Res.payload);
+      assert.equal(es256Body.data.createdByUserId, 'usr-share-owner-ecc-456');
 
       // Verify expired token is rejected with 401 on real Fastify route
       const expiredToken = createTestToken({

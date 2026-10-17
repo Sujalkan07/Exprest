@@ -258,6 +258,9 @@ describe('Phase 2 Reliability: Journey ID, Telemetry & SSE Stream Tests', () => 
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/journeys/journey_12951_2026-10-24/stream',
+        headers: {
+          'x-test-stream': 'true',
+        },
       });
 
       assert.equal(res.statusCode, 200);

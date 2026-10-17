@@ -24,6 +24,140 @@ function formatPNR(value: string): string {
   return raw.slice(0, 3) + '-' + raw.slice(3, 6) + '-' + raw.slice(6, 10);
 }
 
+const DEFAULT_RAKE: CoachRakeItem[] = [
+  { position: 1, code: 'ENG', classType: 'LOCO', className: 'Locomotive Engine' },
+  { position: 2, code: 'SLRD', classType: 'EOG', className: 'Seating cum Luggage Rake' },
+  { position: 3, code: 'GEN', classType: 'GEN', className: 'General Unreserved' },
+  { position: 4, code: 'GEN', classType: 'GEN', className: 'General Unreserved' },
+  { position: 5, code: 'S1', classType: 'SL', className: 'Sleeper Class' },
+  { position: 6, code: 'S2', classType: 'SL', className: 'Sleeper Class' },
+  { position: 7, code: 'S3', classType: 'SL', className: 'Sleeper Class' },
+  { position: 8, code: 'S4', classType: 'SL', className: 'Sleeper Class' },
+  { position: 9, code: 'S5', classType: 'SL', className: 'Sleeper Class' },
+  { position: 10, code: 'S6', classType: 'SL', className: 'Sleeper Class' },
+  { position: 11, code: 'S7', classType: 'SL', className: 'Sleeper Class' },
+  { position: 12, code: 'PC', classType: 'PC', className: 'Pantry Car' },
+  { position: 13, code: 'B1', classType: '3A', className: 'AC 3 Tier' },
+  { position: 14, code: 'B2', classType: '3A', className: 'AC 3 Tier' },
+  { position: 15, code: 'B3', classType: '3A', className: 'AC 3 Tier' },
+  { position: 16, code: 'B4', classType: '3A', className: 'AC 3 Tier' },
+  { position: 17, code: 'A1', classType: '2A', className: 'AC 2 Tier' },
+  { position: 18, code: 'A2', classType: '2A', className: 'AC 2 Tier' },
+  { position: 19, code: 'H1', classType: '1A', className: 'AC First Class' },
+  { position: 20, code: 'EOG', classType: 'EOG', className: 'End On Generation Car' },
+];
+
+function getCoachClass(coachCode: string, rake?: CoachRakeItem[], travelClass?: string): string {
+  const rakeItem = rake?.find((r) => r.code.toUpperCase() === coachCode.toUpperCase());
+  if (rakeItem?.classType) {
+    const ct = rakeItem.classType.toUpperCase();
+    if (ct.includes('3A') || ct.includes('3-TIER') || ct.includes('3 TIER')) return '3A';
+    if (ct.includes('2A') || ct.includes('2-TIER') || ct.includes('2 TIER')) return '2A';
+    if (ct.includes('1A') || ct.includes('FIRST')) return '1A';
+    if (ct.includes('SL') || ct.includes('SLEEPER')) return 'SL';
+    if (ct.includes('3E') || ct.includes('ECONOMY')) return '3E';
+    if (ct.includes('CC') || ct.includes('CHAIR')) return 'CC';
+    if (ct.includes('2S') || ct.includes('SECOND')) return '2S';
+    if (ct.includes('LOCO') || ct.includes('ENG')) return 'LOCO';
+    if (ct.includes('EOG') || ct.includes('LPR')) return 'EOG';
+    if (ct.includes('PC')) return 'PC';
+  }
+  const code = (coachCode || '').toUpperCase();
+  if (code.startsWith('B')) return '3A';
+  if (code.startsWith('M')) return '3E';
+  if (code.startsWith('A')) return '2A';
+  if (code.startsWith('H')) return '1A';
+  if (code.startsWith('S') && !code.startsWith('SLR')) return 'SL';
+  if (code.startsWith('C') || code.startsWith('D')) return 'CC';
+  if (code.startsWith('GEN') || code.startsWith('GS')) return 'GEN';
+  if (code.startsWith('ENG') || code.startsWith('LOCO')) return 'LOCO';
+  if (code === 'PC') return 'PC';
+  if (code === 'EOG' || code === 'LPR' || code.startsWith('SLR')) return 'EOG';
+  return (travelClass || '3A').toUpperCase();
+}
+
+function getCoachLayoutMeta(coachClass: string, rakeTotalBerths?: number) {
+  let berthsPerBay = 8;
+  let totalBerths = rakeTotalBerths || 72;
+
+  switch (coachClass) {
+    case '2A':
+      berthsPerBay = 6;
+      totalBerths = rakeTotalBerths || 48;
+      break;
+    case '3E':
+      berthsPerBay = 9;
+      totalBerths = rakeTotalBerths || 80;
+      break;
+    case '1A':
+      berthsPerBay = 4;
+      totalBerths = rakeTotalBerths || 24;
+      break;
+    case 'CC':
+      berthsPerBay = 5;
+      totalBerths = rakeTotalBerths || 75;
+      break;
+    case '2S':
+      berthsPerBay = 6;
+      totalBerths = rakeTotalBerths || 108;
+      break;
+    case 'SL':
+      berthsPerBay = 8;
+      totalBerths = rakeTotalBerths || 72;
+      break;
+    case '3A':
+    default:
+      berthsPerBay = 8;
+      totalBerths = rakeTotalBerths || 72;
+      break;
+  }
+
+  const totalBays = Math.max(1, Math.ceil(totalBerths / berthsPerBay));
+  return { berthsPerBay, totalBerths, totalBays };
+}
+
+function getBerthType(seatNum: number, coachClass: string): string {
+  switch (coachClass) {
+    case '2A': {
+      const mod = seatNum % 6;
+      if (mod === 1 || mod === 3) return 'LB';
+      if (mod === 2 || mod === 4) return 'UB';
+      if (mod === 5) return 'SL';
+      return 'SU';
+    }
+    case '3E': {
+      const mod = seatNum % 9;
+      if (mod === 1 || mod === 4) return 'LB';
+      if (mod === 2 || mod === 5) return 'MB';
+      if (mod === 3 || mod === 6) return 'UB';
+      if (mod === 7) return 'SL';
+      if (mod === 8) return 'SM';
+      return 'SU';
+    }
+    case '1A': {
+      const mod = seatNum % 4;
+      if (mod === 1 || mod === 3) return 'LB';
+      return 'UB';
+    }
+    case 'CC': {
+      const mod = seatNum % 5;
+      if (mod === 1 || mod === 0) return 'WS';
+      if (mod === 2) return 'MS';
+      return 'AS';
+    }
+    case '3A':
+    case 'SL':
+    default: {
+      const mod = seatNum % 8;
+      if (mod === 1 || mod === 4) return 'LB';
+      if (mod === 2 || mod === 5) return 'MB';
+      if (mod === 3 || mod === 6) return 'UB';
+      if (mod === 7) return 'SL';
+      return 'SU';
+    }
+  }
+}
+
 export default function PnrStatusPage() {
   const router = useRouter();
   const [supabase] = useState(() => createClient());
@@ -31,6 +165,8 @@ export default function PnrStatusPage() {
   const [pnrInput, setPnrInput] = useState('624-819-3042');
   const [isLoading, setIsLoading] = useState(false);
   const [pnrData, setPnrData] = useState<PnrStatusResult | null>(null);
+  const [selectedCoach, setSelectedCoach] = useState<string | null>(null);
+  const [selectedBay, setSelectedBay] = useState<number | null>(null);
   const [errorInfo, setErrorInfo] = useState<{
     code: string;
     message: string;
@@ -221,69 +357,30 @@ export default function PnrStatusPage() {
     }
   }, [performLookup]);
 
-  // 4. Dynamic fare enrichment if booking response is missing fare details
+  // 4. Initialize coach and bay selection when PNR data is loaded or refreshed
   useEffect(() => {
-    if (!pnrData || pnrData.fare?.totalAmountPaid) return;
-    let isCancelled = false;
+    if (pnrData) {
+      const firstPassengerCoach = pnrData.userCoach || pnrData.passengers?.find((p) => p.coach)?.coach || null;
+      setSelectedCoach(firstPassengerCoach);
 
-    async function fetchDynamicFare() {
-      try {
-        const queryParams = new URLSearchParams({
-          from: pnrData!.sourceStationCode || '',
-          to: pnrData!.destinationStationCode || '',
-          class: pnrData!.travelClass || '3A',
-          date: pnrData!.journeyDate || '',
-          quota: pnrData!.quota || 'GN',
-        });
-        const res = await fetch(`${API_BASE}/api/v1/trains/${pnrData!.trainNumber}/fare?${queryParams.toString()}`);
-        if (!res.ok || isCancelled) return;
-        const json = await res.json();
-        const b = json?.data?.breakdown;
-        if (b && !isCancelled) {
-          const numPassengers = Math.max(1, pnrData!.passengers?.length || 1);
-          const isAc = !['SL', '2S'].includes((pnrData!.travelClass || '').toUpperCase());
-          const irctcConvenienceFee = isAc ? 35 : 18;
-
-          const baseFare = (Number(b.baseFare) || 0) * numPassengers;
-          const surcharges = (
-            (Number(b.reservationCharge) || 0) +
-            (Number(b.superfastCharge) || 0) +
-            (Number(b.tatkalFare) || 0) +
-            (Number(b.dynamicFare) || 0) +
-            (Number(b.otherCharge) || 0)
-          ) * numPassengers;
-          const cateringCharges = (Number(b.cateringCharge) || 0) * numPassengers;
-          const convenienceFee = ((Number(b.goodsServiceTax) || 0) * numPassengers) + irctcConvenienceFee;
-          const totalAmountPaid = (Number(b.totalFare) || 0) * numPassengers + irctcConvenienceFee;
-
-          setPnrData((prev) => {
-            if (!prev || prev.pnr !== pnrData!.pnr) return prev;
-            return {
-              ...prev,
-              fare: {
-                baseFare,
-                surcharges,
-                convenienceFee,
-                cateringCharges,
-                totalAmountPaid,
-                perPassengerFare: Number(b.totalFare) || null,
-                transactionId: prev.fare?.transactionId || null,
-                paymentMethod: prev.fare?.paymentMethod || null,
-                breakdownSource: json?.data?.source || 'railradar_prs',
-                isEstimated: true,
-              },
-            };
-          });
+      const firstPassengerBerth = pnrData.passengers?.find((p) => p.berthNumber != null)?.berthNumber;
+      if (firstPassengerBerth != null) {
+        const num = parseInt(String(firstPassengerBerth).replace(/\D/g, ''), 10);
+        if (!isNaN(num) && num > 0) {
+          const coachClass = getCoachClass(firstPassengerCoach || '3A', pnrData.rakeComposition, pnrData.travelClass);
+          const meta = getCoachLayoutMeta(coachClass);
+          const initialBay = Math.min(meta.totalBays, Math.max(1, Math.ceil(num / meta.berthsPerBay)));
+          setSelectedBay(initialBay);
+        } else {
+          setSelectedBay(1);
         }
-      } catch (err) {
-        console.warn('Failed to dynamically fetch fare for train:', err);
+      } else {
+        setSelectedBay(1);
       }
+    } else {
+      setSelectedCoach(null);
+      setSelectedBay(null);
     }
-
-    fetchDynamicFare();
-    return () => {
-      isCancelled = true;
-    };
   }, [pnrData]);
 
   // Input change handler with auto-formatting
@@ -378,8 +475,63 @@ export default function PnrStatusPage() {
     }
   };
 
-  // Calculate default coach position if not returned by provider
-  const userCoach = pnrData?.userCoach || pnrData?.passengers?.find((p) => p.coach)?.coach || 'B4';
+  // User's allocated coach (if any) and interactive coach selection
+  const userCoach = pnrData?.userCoach || pnrData?.passengers?.find((p) => p.coach)?.coach || null;
+  const displayRake = (pnrData?.rakeComposition && pnrData.rakeComposition.length > 0)
+    ? pnrData.rakeComposition
+    : DEFAULT_RAKE;
+  const activeCoach = selectedCoach || userCoach || (displayRake.find((c) => !['ENG', 'LOCO', 'EOG', 'LPR'].includes(c.code))?.code) || displayRake[0]?.code || 'B4';
+  const isUserActiveCoach = Boolean(userCoach && activeCoach.toUpperCase() === userCoach.toUpperCase());
+  const activeCoachIndex = displayRake.findIndex((c) => c.code.toUpperCase() === activeCoach.toUpperCase());
+  const activeCoachItem = activeCoachIndex !== -1 ? displayRake[activeCoachIndex] : undefined;
+  const coachClass = getCoachClass(activeCoach, displayRake, pnrData?.travelClass);
+  const layoutMeta = getCoachLayoutMeta(coachClass, activeCoachItem?.totalBerths);
+
+  const userPassengersInCoach = (pnrData?.passengers || []).filter(
+    (p) => p.coach && p.coach.toUpperCase() === activeCoach.toUpperCase() && p.berthNumber != null
+  );
+  const userPrimaryBerthNum = userPassengersInCoach[0]
+    ? parseInt(String(userPassengersInCoach[0].berthNumber).replace(/\D/g, ''), 10)
+    : null;
+  const userPrimaryBay = (userPrimaryBerthNum && !isNaN(userPrimaryBerthNum) && userPrimaryBerthNum > 0)
+    ? Math.min(layoutMeta.totalBays, Math.max(1, Math.ceil(userPrimaryBerthNum / layoutMeta.berthsPerBay)))
+    : 1;
+
+  const currentBay = selectedBay || userPrimaryBay || 1;
+  const bayStartBerth = (currentBay - 1) * layoutMeta.berthsPerBay + 1;
+  const bayEndBerth = Math.min(currentBay * layoutMeta.berthsPerBay, layoutMeta.totalBerths);
+
+  const bayBerths: Array<{ num: number; type: string }> = [];
+  for (let n = bayStartBerth; n <= bayEndBerth; n++) {
+    bayBerths.push({
+      num: n,
+      type: getBerthType(n, coachClass),
+    });
+  }
+
+  const userPassengersInBay = userPassengersInCoach.filter((p) => {
+    const num = parseInt(String(p.berthNumber).replace(/\D/g, ''), 10);
+    return !isNaN(num) && num >= bayStartBerth && num <= bayEndBerth;
+  });
+
+  const coachClassName = activeCoachItem?.className || (
+    coachClass === '3A' ? 'AC 3-Tier (3A)' :
+    coachClass === '2A' ? 'AC 2-Tier (2A)' :
+    coachClass === '1A' ? 'AC First Class (1A)' :
+    coachClass === 'SL' ? 'Sleeper Class (SL)' :
+    coachClass === '3E' ? 'AC 3 Economy (3E)' :
+    coachClass === 'CC' ? 'AC Chair Car (CC)' :
+    coachClass === '2S' ? 'Second Sitting (2S)' :
+    coachClass === 'LOCO' ? 'Locomotive Engine' :
+    coachClass === 'PC' ? 'Pantry Car' :
+    coachClass === 'EOG' ? 'Generator Car' :
+    'Standard Coach'
+  );
+
+  const socketBerths = bayBerths.filter((b) => ['LB', 'SL', 'SU'].includes(b.type)).map((b) => b.num);
+  const socketBerthsText = socketBerths.length > 0
+    ? `Charging sockets at Berth ${socketBerths.slice(0, 3).join(', ')}${socketBerths.length > 3 ? '...' : ''}`
+    : null;
 
   return (
     <div className="bg-background font-body-md text-on-surface antialiased min-h-screen flex flex-col justify-between selection:bg-surface-variant selection:text-primary">
@@ -700,9 +852,8 @@ export default function PnrStatusPage() {
                   <div className="h-48 rounded-xl bg-surface-container"></div>
                 </div>
                 <div className="lg:col-span-4 flex flex-col gap-space-lg">
-                  <div className="h-56 rounded-xl bg-surface-container"></div>
                   <div className="h-64 rounded-xl bg-surface-container"></div>
-                  <div className="h-32 rounded-xl bg-surface-container"></div>
+                  <div className="h-28 rounded-xl bg-surface-container"></div>
                 </div>
               </div>
             )}
@@ -985,192 +1136,301 @@ export default function PnrStatusPage() {
                   <div className="rounded-xl bg-surface-elevated shadow-sm p-space-lg flex flex-col gap-space-lg border border-border">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm">
                       <div>
-                        <h2 className="font-heading-md text-heading-md font-semibold text-on-surface">
-                          Rake Composition &amp; Coach {userCoach} Position
-                        </h2>
-                        <p className="font-body-sm text-body-sm text-on-surface-variant">
-                          Train layout relative to engine position (Heading Forward)
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="font-heading-md text-heading-md font-semibold text-on-surface">
+                            Rake Composition &amp; Coach {activeCoach}
+                          </h2>
+                          {isUserActiveCoach && (
+                            <span className="px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-label text-label font-semibold uppercase">
+                              Your Booked Coach
+                            </span>
+                          )}
+                          {!isUserActiveCoach && userCoach && (
+                            <button
+                              onClick={() => {
+                                setSelectedCoach(userCoach);
+                                setSelectedBay(userPrimaryBay);
+                              }}
+                              className="px-2 py-0.5 rounded-md bg-surface-container hover:bg-surface-container-high text-primary font-label text-label font-medium transition-colors"
+                              type="button"
+                            >
+                              ← Switch to Your Coach ({userCoach})
+                            </button>
+                          )}
+                        </div>
+                        <p className="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+                          Train layout relative to engine position (Heading Forward) · Click any coach to inspect layout
                         </p>
                       </div>
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container font-label text-label text-on-surface font-medium">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container font-label text-label text-on-surface font-medium self-start sm:self-auto">
                         <span className="material-symbols-outlined text-[16px]">location_on</span>
-                        Pillar 14 · Platform 3 (NDLS)
+                        {pnrData.departurePlatform
+                          ? `Platform ${pnrData.departurePlatform} · ${pnrData.sourceStationCode}`
+                          : `${pnrData.sourceStationCode} (${pnrData.sourceStationName})`}
+                        {activeCoachIndex !== -1 && (
+                          <span className="text-text-tertiary">· Pos {activeCoachIndex + 1}/{displayRake.length}</span>
+                        )}
                       </span>
                     </div>
 
                     {/* Rake Visualizer Strip */}
                     <div className="overflow-x-auto pb-2">
                       <div className="flex items-center gap-1.5 min-w-[720px] py-2">
-                        {pnrData.rakeComposition && pnrData.rakeComposition.length > 0 ? (
-                          pnrData.rakeComposition.map((coach) => {
-                            const isUserCoach = coach.code === userCoach;
-                            if (isUserCoach) {
-                              return (
-                                <div
-                                  key={coach.position}
-                                  className="w-20 h-14 rounded-lg bg-primary text-on-primary flex flex-col items-center justify-center flex-shrink-0 shadow-md ring-2 ring-primary"
-                                >
-                                  <span className="font-label text-[9px] uppercase tracking-wider opacity-75">Your Coach</span>
-                                  <span className="font-heading-md text-heading-md font-bold tracking-tight">{coach.code}</span>
-                                </div>
-                              );
-                            }
-                            if (coach.code === 'ENG' || coach.classType === 'LOCO') {
-                              return (
-                                <div
-                                  key={coach.position}
-                                  className="w-16 h-12 rounded-lg bg-surface-container-highest flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0"
-                                >
-                                  <span className="material-symbols-outlined text-[18px]">train</span>
-                                  <span className="font-label text-[9px] uppercase font-semibold">LOCO</span>
-                                </div>
-                              );
-                            }
-                            if (coach.code === 'PC') {
-                              return (
-                                <div
-                                  key={coach.position}
-                                  className="w-12 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0"
-                                >
-                                  <span className="material-symbols-outlined text-[16px]">restaurant</span>
-                                  <span className="font-label text-[9px] uppercase font-semibold">PC</span>
-                                </div>
-                              );
-                            }
+                        {displayRake.map((coach, idx) => {
+                          const isThisUserCoach = userCoach && coach.code.toUpperCase() === userCoach.toUpperCase();
+                          const isSelected = coach.code.toUpperCase() === activeCoach.toUpperCase();
+                          const isLoco = coach.code === 'ENG' || coach.classType === 'LOCO' || coach.code === 'LOCO';
+                          const isPowerCar = coach.code === 'EOG' || coach.code === 'LPR' || coach.code === 'SLRD';
+                          const isPantry = coach.code === 'PC';
+
+                          if (isLoco) {
                             return (
-                              <div
-                                key={coach.position}
-                                className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0"
+                              <button
+                                key={`${coach.position || idx}-${coach.code}`}
+                                type="button"
+                                onClick={() => setSelectedCoach(coach.code)}
+                                title={`Locomotive Engine (Position ${coach.position || idx + 1})`}
+                                className={`w-16 h-12 rounded-lg flex flex-col items-center justify-center flex-shrink-0 transition-all ${
+                                  isSelected
+                                    ? 'ring-2 ring-primary bg-primary/10 text-primary'
+                                    : 'bg-surface-container-highest text-on-surface-variant hover:bg-surface-container-high'
+                                }`}
                               >
-                                <span className="font-label text-[10px] font-semibold">{coach.code}</span>
-                              </div>
+                                <span className="material-symbols-outlined text-[18px]">train</span>
+                                <span className="font-label text-[9px] uppercase font-semibold">LOCO</span>
+                              </button>
                             );
-                          })
-                        ) : (
-                          // Default canonical Rajdhani rake layout matching Stitch reference
-                          <>
-                            <div className="w-16 h-12 rounded-lg bg-surface-container-highest flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="material-symbols-outlined text-[18px]">train</span>
-                              <span className="font-label text-[9px] uppercase font-semibold">LOCO</span>
-                            </div>
-                            <div className="w-10 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-text-tertiary flex-shrink-0">
-                              <span className="font-label text-[9px] uppercase font-semibold">EOG</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">H1</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">A1</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">A2</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">B1</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">B2</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">B3</span>
-                            </div>
-                            <div className="w-20 h-14 rounded-lg bg-primary text-on-primary flex flex-col items-center justify-center flex-shrink-0 shadow-md">
-                              <span className="font-label text-[9px] uppercase tracking-wider opacity-75">Your Coach</span>
-                              <span className="font-heading-md text-heading-md font-bold tracking-tight">{userCoach}</span>
-                            </div>
-                            <div className="w-12 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="material-symbols-outlined text-[16px]">restaurant</span>
-                              <span className="font-label text-[9px] uppercase font-semibold">PC</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">B5</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">B6</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">B7</span>
-                            </div>
-                            <div className="w-11 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-on-surface-variant flex-shrink-0">
-                              <span className="font-label text-[10px] font-semibold">B8</span>
-                            </div>
-                            <div className="w-10 h-12 rounded-lg bg-surface-container flex flex-col items-center justify-center text-text-tertiary flex-shrink-0">
-                              <span className="font-label text-[9px] uppercase font-semibold">EOG</span>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                          }
 
-                    {/* 9. Coach Internal Bay Layout Diagram */}
-                    <div className="p-space-md rounded-xl bg-surface-container-low flex flex-col gap-space-md border border-border/40">
-                      <div className="flex items-center justify-between">
-                        <span className="font-heading-md text-body-md font-semibold text-on-surface">
-                          Inside Coach {userCoach} · Bay 4 (Berths 31–36)
-                        </span>
-                        <span className="font-label text-label text-text-tertiary uppercase">
-                          {pnrData.passengers.length} Berth{pnrData.passengers.length === 1 ? '' : 's'} Reserved
-                        </span>
-                      </div>
-
-                      {/* Seat grid representation */}
-                      <div className="grid grid-cols-4 sm:grid-cols-8 gap-space-xs text-center font-label text-label">
-                        {[
-                          { num: 30, type: 'UB' },
-                          { num: 31, type: 'UB' },
-                          { num: 32, type: 'LB' },
-                          { num: 33, type: 'MB' },
-                          { num: 34, type: 'UB' },
-                          { num: 35, type: 'SU' },
-                          { num: 36, type: 'SL' },
-                          { num: 37, type: 'LB' },
-                        ].map((seat) => {
-                          const matchedPassengerIndex = pnrData.passengers.findIndex(
-                            (p) => String(p.berthNumber) === String(seat.num)
-                          );
-                          const isAllocated = matchedPassengerIndex !== -1;
-
-                          if (isAllocated) {
+                          if (isPowerCar) {
                             return (
-                              <div
-                                key={seat.num}
-                                className="p-2 rounded bg-success text-on-primary font-bold shadow-sm"
+                              <button
+                                key={`${coach.position || idx}-${coach.code}`}
+                                type="button"
+                                onClick={() => setSelectedCoach(coach.code)}
+                                title={`Power Generator Car (Position ${coach.position || idx + 1})`}
+                                className={`w-11 h-12 rounded-lg flex flex-col items-center justify-center flex-shrink-0 transition-all ${
+                                  isSelected
+                                    ? 'ring-2 ring-primary bg-primary/10 text-primary'
+                                    : 'bg-surface-container text-text-tertiary hover:bg-surface-container-high'
+                                }`}
                               >
-                                {seat.num}
-                                <span className="block text-[9px] uppercase tracking-wider font-semibold">
-                                  {seat.type} (P{matchedPassengerIndex + 1})
-                                </span>
-                              </div>
+                                <span className="font-label text-[9px] uppercase font-semibold">{coach.code}</span>
+                              </button>
+                            );
+                          }
+
+                          if (isPantry) {
+                            return (
+                              <button
+                                key={`${coach.position || idx}-${coach.code}`}
+                                type="button"
+                                onClick={() => setSelectedCoach(coach.code)}
+                                title={`Pantry / Dining Car (Position ${coach.position || idx + 1})`}
+                                className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center flex-shrink-0 transition-all ${
+                                  isSelected
+                                    ? 'ring-2 ring-primary bg-primary/10 text-primary'
+                                    : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
+                                }`}
+                              >
+                                <span className="material-symbols-outlined text-[16px]">restaurant</span>
+                                <span className="font-label text-[9px] uppercase font-semibold">PC</span>
+                              </button>
+                            );
+                          }
+
+                          if (isThisUserCoach) {
+                            return (
+                              <button
+                                key={`${coach.position || idx}-${coach.code}`}
+                                type="button"
+                                onClick={() => setSelectedCoach(coach.code)}
+                                title={`Your Coach: ${coach.code} (Position ${coach.position || idx + 1})`}
+                                className="w-20 h-14 rounded-lg bg-primary text-on-primary flex flex-col items-center justify-center flex-shrink-0 shadow-md ring-2 ring-primary hover:opacity-95 transition-transform active:scale-95"
+                              >
+                                <span className="font-label text-[9px] uppercase tracking-wider opacity-75">Your Coach</span>
+                                <span className="font-heading-md text-heading-md font-bold tracking-tight">{coach.code}</span>
+                              </button>
                             );
                           }
 
                           return (
-                            <div
-                              key={seat.num}
-                              className="p-2 rounded bg-surface-elevated text-on-surface-variant border border-border/30"
+                            <button
+                              key={`${coach.position || idx}-${coach.code}`}
+                              type="button"
+                              onClick={() => setSelectedCoach(coach.code)}
+                              title={`Coach ${coach.code} · ${coach.className || coach.classType || ''} (Position ${coach.position || idx + 1})`}
+                              className={`w-11 h-12 rounded-lg flex flex-col items-center justify-center flex-shrink-0 transition-all ${
+                                isSelected
+                                  ? 'bg-surface-container-highest ring-2 ring-primary text-primary font-bold shadow-sm'
+                                  : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                              }`}
                             >
-                              {seat.num}
-                              <span className="block text-[9px] text-text-tertiary">{seat.type}</span>
-                            </div>
+                              <span className="font-label text-[10px] font-semibold">{coach.code}</span>
+                            </button>
                           );
                         })}
                       </div>
+                    </div>
 
-                      <div className="flex items-center gap-space-md font-label text-label text-on-surface-variant pt-1 flex-wrap">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-3 h-3 rounded bg-success"></span>
-                          <span>Your Confirmed Berths</span>
+                    {/* 9. Coach Internal Bay Layout Diagram */}
+                    {['LOCO', 'PC', 'EOG'].includes(coachClass) ? (
+                      <div className="p-space-md rounded-xl bg-surface-container-low flex flex-col items-center justify-center py-8 text-center gap-2 border border-border/40">
+                        <span className="material-symbols-outlined text-[36px] text-primary">
+                          {coachClass === 'PC' ? 'restaurant' : 'bolt'}
+                        </span>
+                        <h3 className="font-heading-md text-heading-md font-semibold text-on-surface">
+                          {coachClassName} ({activeCoach})
+                        </h3>
+                        <p className="font-body-sm text-body-sm text-on-surface-variant max-w-md">
+                          {coachClass === 'PC'
+                            ? 'Pantry and onboard catering facility. Meals and refreshments are prepared here for passengers during transit.'
+                            : 'Operational railway service unit. This car does not contain passenger passenger berths.'}
+                        </p>
+                        {userCoach && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCoach(userCoach);
+                              setSelectedBay(userPrimaryBay);
+                            }}
+                            className="mt-2 px-3 py-1.5 rounded-lg bg-primary text-on-primary font-body-sm text-body-sm font-semibold hover:opacity-90 transition-opacity"
+                          >
+                            Return to Your Coach ({userCoach})
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-space-md rounded-xl bg-surface-container-low flex flex-col gap-space-md border border-border/40">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-space-xs">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-heading-md text-body-md font-semibold text-on-surface">
+                              Inside Coach {activeCoach} · Bay {currentBay} of {layoutMeta.totalBays}
+                            </span>
+                            <span className="text-on-surface-variant font-body-sm text-body-sm">
+                              (Berths {bayStartBerth}–{bayEndBerth})
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant font-label text-label uppercase">
+                              {coachClassName}
+                            </span>
+                          </div>
+
+                          {/* Bay navigator controls */}
+                          <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                            <button
+                              type="button"
+                              disabled={currentBay <= 1}
+                              onClick={() => setSelectedBay(Math.max(1, currentBay - 1))}
+                              className="px-2 py-1 rounded bg-surface-elevated hover:bg-surface-container disabled:opacity-40 disabled:pointer-events-none text-on-surface font-label text-label border border-border transition-colors flex items-center gap-1"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">chevron_left</span>
+                              <span>Prev Bay</span>
+                            </button>
+                            <span className="px-2 font-label text-label text-text-tertiary">
+                              {currentBay} / {layoutMeta.totalBays}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={currentBay >= layoutMeta.totalBays}
+                              onClick={() => setSelectedBay(Math.min(layoutMeta.totalBays, currentBay + 1))}
+                              className="px-2 py-1 rounded bg-surface-elevated hover:bg-surface-container disabled:opacity-40 disabled:pointer-events-none text-on-surface font-label text-label border border-border transition-colors flex items-center gap-1"
+                            >
+                              <span>Next Bay</span>
+                              <span className="material-symbols-outlined text-[14px]">chevron_right</span>
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-3 h-3 rounded bg-surface-elevated border border-border"></span>
-                          <span>Other Booked Passengers</span>
+
+                        {/* Informational banners if user has berths elsewhere or allocation pending */}
+                        {userPassengersInCoach.length > 0 && userPassengersInBay.length === 0 && (
+                          <div className="px-3 py-2 rounded-lg bg-surface-container text-on-surface font-body-sm text-body-sm flex items-center justify-between gap-2 border border-border/50">
+                            <div className="flex items-center gap-2">
+                              <span className="material-symbols-outlined text-primary text-[18px]">info</span>
+                              <span>
+                                Your confirmed seat ({userPassengersInCoach.map(p => `Berth ${p.berthNumber}`).join(', ')}) is in <strong>Bay {userPrimaryBay}</strong>.
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedBay(userPrimaryBay)}
+                              className="px-2.5 py-1 rounded bg-primary text-on-primary font-label text-label font-medium hover:opacity-90 transition-opacity flex-shrink-0"
+                            >
+                              Jump to My Seat
+                            </button>
+                          </div>
+                        )}
+
+                        {!userCoach && (
+                          <div className="px-3 py-2 rounded-lg bg-surface-container-high/60 text-on-surface-variant font-body-sm text-body-sm flex items-center gap-2 border border-border/40">
+                            <span className="material-symbols-outlined text-[18px] text-warning">pending</span>
+                            <span>
+                              Berth and coach numbers will be finalized by CRIS when reservation charts are prepared. Previewing standard {coachClassName} layout.
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Dynamic Seat Grid Representation */}
+                        <div className={`grid gap-space-xs text-center font-label text-label ${
+                          bayBerths.length <= 4
+                            ? 'grid-cols-2 sm:grid-cols-4'
+                            : bayBerths.length <= 6
+                            ? 'grid-cols-3 sm:grid-cols-6'
+                            : 'grid-cols-4 sm:grid-cols-8'
+                        }`}>
+                          {bayBerths.map((seat) => {
+                            const matchedPassengerIndex = pnrData.passengers.findIndex(
+                              (p) => (p.coach ? p.coach.toUpperCase() === activeCoach.toUpperCase() : isUserActiveCoach) &&
+                                    String(p.berthNumber) === String(seat.num)
+                            );
+                            const isAllocated = matchedPassengerIndex !== -1;
+
+                            if (isAllocated) {
+                              return (
+                                <div
+                                  key={seat.num}
+                                  className="p-2.5 rounded-lg bg-success text-on-primary font-bold shadow-md ring-2 ring-success/30 flex flex-col items-center justify-center transition-transform scale-[1.02]"
+                                >
+                                  <span className="font-heading-md text-heading-md leading-none">{seat.num}</span>
+                                  <span className="block text-[9px] uppercase tracking-wider font-semibold mt-1">
+                                    {seat.type} (P{matchedPassengerIndex + 1})
+                                  </span>
+                                  <span className="text-[8px] opacity-90 font-medium">Your Confirmed Berth</span>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div
+                                key={seat.num}
+                                className="p-2.5 rounded-lg bg-surface-elevated text-on-surface-variant border border-border/40 hover:border-border transition-colors flex flex-col items-center justify-center"
+                              >
+                                <span className="font-heading-sm text-heading-sm text-on-surface font-semibold">{seat.num}</span>
+                                <span className="block text-[10px] text-text-tertiary font-medium mt-0.5">{seat.type}</span>
+                                <span className="text-[8px] text-outline font-normal">Standard Berth</span>
+                              </div>
+                            );
+                          })}
                         </div>
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <span className="material-symbols-outlined text-[15px] text-on-surface-variant">electric_bolt</span>
-                          <span>Charging sockets at Berth 32 &amp; 35</span>
+
+                        {/* Legend and Socket info */}
+                        <div className="flex items-center gap-space-md font-label text-label text-on-surface-variant pt-1 flex-wrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-3 h-3 rounded bg-success"></span>
+                            <span>Your Confirmed Berths</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-3 h-3 rounded bg-surface-elevated border border-border"></span>
+                            <span>Other Berths in Bay</span>
+                          </div>
+                          {socketBerthsText && (
+                            <div className="flex items-center gap-1.5 ml-auto text-text-tertiary">
+                              <span className="material-symbols-outlined text-[15px] text-on-surface-variant">electric_bolt</span>
+                              <span>{socketBerthsText}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
                 </div>
@@ -1239,118 +1499,6 @@ export default function PnrStatusPage() {
                     </Link>
                   </div>
 
-                  {/* 11. Confirmation & Fare Summary Widget */}
-                  <div className="rounded-xl bg-surface-elevated shadow-sm p-space-lg flex flex-col gap-space-md border border-border">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-space-xs">
-                        <h3 className="font-heading-md text-heading-md font-semibold text-on-surface">
-                          Fare &amp; Booking Details
-                        </h3>
-                        {pnrData.fare?.isEstimated && (
-                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                            Estimated Tariff
-                          </span>
-                        )}
-                      </div>
-                      <span className="material-symbols-outlined text-outline text-[20px]">receipt_long</span>
-                    </div>
-
-                    {/* Confirmation Probability Progress */}
-                    <div className="p-space-md rounded-lg bg-surface-container-low flex flex-col gap-space-xs border border-border/30">
-                      <div className="flex items-center justify-between">
-                        <span className="font-label text-label text-on-surface-variant uppercase tracking-wider">
-                          Status Progression
-                        </span>
-                        <span className="font-body-sm text-body-sm font-bold text-success">
-                          {pnrData.confirmationProbability ? `${pnrData.confirmationProbability}% Locked` : '100% Locked'}
-                        </span>
-                      </div>
-                      <div className="w-full h-2 rounded-full bg-surface-container-highest overflow-hidden">
-                        <div
-                          className="h-full bg-success rounded-full"
-                          style={{ width: `${pnrData.confirmationProbability || 100}%` }}
-                        ></div>
-                      </div>
-                      <span className="font-label text-label text-text-tertiary">
-                        Originally booked at {pnrData.bookingStatus} · Confirmed before chart
-                      </span>
-                    </div>
-
-                    {/* Fare breakdown */}
-                    <div className="flex flex-col gap-space-xs font-body-sm text-body-sm divide-y divide-surface-container">
-                      <div className="flex items-center justify-between pt-1">
-                        <span className="text-on-surface-variant">
-                          Base Fare ({pnrData.passengers.length} Passenger{pnrData.passengers.length === 1 ? '' : 's'})
-                        </span>
-                        <span className="font-medium text-on-surface">
-                          {pnrData.fare?.baseFare != null
-                            ? `₹${Number(pnrData.fare.baseFare).toLocaleString('en-IN')}`
-                            : '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pt-2">
-                        <span className="text-on-surface-variant">Reservation, Superfast &amp; Dynamic Surcharges</span>
-                        <span className="font-medium text-on-surface">
-                          {pnrData.fare?.surcharges != null
-                            ? `₹${Number(pnrData.fare.surcharges).toLocaleString('en-IN')}`
-                            : '₹0'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pt-2">
-                        <span className="text-on-surface-variant">IRCTC Convenience Fee &amp; GST</span>
-                        <span className="font-medium text-on-surface">
-                          {pnrData.fare?.convenienceFee != null
-                            ? `₹${Number(pnrData.fare.convenienceFee).toLocaleString('en-IN')}`
-                            : '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pt-2">
-                        <span className="text-on-surface-variant">Catering Charges (Meals / Pantry)</span>
-                        <span className="font-medium text-on-surface">
-                          {pnrData.fare?.cateringCharges && Number(pnrData.fare.cateringCharges) > 0
-                            ? `₹${Number(pnrData.fare.cateringCharges).toLocaleString('en-IN')}`
-                            : '₹0 (Not opted / Not applicable)'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pt-2">
-                        <span className="font-semibold text-on-surface">Total Amount Paid</span>
-                        <span className="font-heading-md text-heading-md font-bold text-on-surface">
-                          {pnrData.fare?.totalAmountPaid != null
-                            ? `₹${Number(pnrData.fare.totalAmountPaid).toLocaleString('en-IN')}`
-                            : '—'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-space-sm rounded bg-surface-container-low text-text-tertiary font-label text-label flex flex-col gap-0.5 border border-border/30">
-                      <span>
-                        Transaction ID: <strong>{pnrData.fare?.transactionId || 'Not provided by PRS (Direct booking lookup)'}</strong>
-                      </span>
-                      <span>
-                        Payment Method: <strong>{pnrData.fare?.paymentMethod || 'PRS Standard Reservation / Verified Gateway'}</strong>
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* 12. Cancellation Information Card */}
-                  <div className="rounded-xl bg-surface-elevated shadow-sm p-space-lg flex flex-col gap-space-sm border border-border">
-                    <div className="flex items-center gap-space-xs text-on-surface">
-                      <span className="material-symbols-outlined text-[20px] text-on-surface-variant">policy</span>
-                      <h3 className="font-heading-md text-heading-md font-semibold">Cancellation Terms</h3>
-                    </div>
-                    <p className="font-body-sm text-body-sm text-on-surface-variant">
-                      Full cancellation with flat clerkage deductible (₹150/passenger) valid until chart preparation finalized.
-                    </p>
-                    <div className="p-space-sm rounded bg-surface-container flex items-center justify-between font-label text-label">
-                      <span className="text-on-surface-variant">Current Refund Value:</span>
-                      <span className="font-bold text-on-surface">
-                        {pnrData.cancellationTerms?.currentRefundValue != null
-                          ? `₹${Number(pnrData.cancellationTerms.currentRefundValue).toLocaleString('en-IN')}`
-                          : 'Calculated per IRCTC cancellation rules'}
-                      </span>
-                    </div>
-                  </div>
-
                   {/* 13. Value Added Services Shortcuts */}
                   <div className="grid grid-cols-2 gap-space-sm">
                     <a
@@ -1362,7 +1510,9 @@ export default function PnrStatusPage() {
                       <span className="material-symbols-outlined text-on-surface text-[22px]">restaurant_menu</span>
                       <span className="font-body-sm text-body-sm font-semibold text-on-surface">Order E-Catering</span>
                       <span className="font-label text-label text-on-surface-variant">
-                        Deliver to Seat {userCoach}-{pnrData.passengers[0]?.berthNumber || '32'}
+                        {userCoach
+                          ? `Deliver to Seat ${userCoach}-${pnrData.passengers[0]?.berthNumber || '32'}`
+                          : `Deliver to your train seat`}
                       </span>
                     </a>
                     <a
