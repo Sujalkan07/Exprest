@@ -18,11 +18,16 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
-  // 2. Public application routes: /login, /auth/callback, /share/*
-  const isPublicRoute =
-    pathname === '/login' ||
-    pathname.startsWith('/auth/callback') ||
-    pathname.startsWith('/share');
+  // 2. Protected application routes requiring active Supabase authentication:
+  // - /saved (saved journeys)
+  // - /settings (user preferences and account)
+  // Public application routes (/ , /journey/*, /pnr-status, /share/*, /login, /auth/callback)
+  // are accessible to all users.
+  const isProtectedRoute =
+    pathname === '/saved' ||
+    pathname.startsWith('/saved/') ||
+    pathname === '/settings' ||
+    pathname.startsWith('/settings/');
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key';
@@ -71,11 +76,9 @@ export async function middleware(request: NextRequest) {
   }
 
   // If route is protected and user is NOT authenticated, redirect to /login
-  if (!isPublicRoute && !isAuthenticated) {
+  if (isProtectedRoute && !isAuthenticated) {
     const loginUrl = new URL('/login', request.url);
-    if (pathname !== '/') {
-      loginUrl.searchParams.set('redirectTo', pathname);
-    }
+    loginUrl.searchParams.set('redirectTo', pathname);
     return NextResponse.redirect(loginUrl);
   }
 
