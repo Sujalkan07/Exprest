@@ -590,4 +590,287 @@ describe('PNR Status API & Validation Suite', () => {
       await app.close();
     });
   });
+
+  describe('8. Robust Coach and Berth Extraction & Normalization', () => {
+    it('normalizes coach codes across diverse formatting styles', () => {
+      assert.equal(RailRadarAdapter.normalizeCoachCode('b-4'), 'B4');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('B - 4'), 'B4');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('B 4'), 'B4');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('b4'), 'B4');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('B04'), 'B4');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('S-12'), 'S12');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('S01'), 'S1');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('EC'), 'EC');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('CC'), 'CC');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('FC'), 'FC');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('EA'), 'EA');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('HA1'), 'HA1');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('HB1'), 'HB1');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('M2'), 'M2');
+      assert.equal(RailRadarAdapter.normalizeCoachCode('C1'), 'C1');
+
+      // Invalid tokens / status strings must not be treated as coach
+      assert.equal(RailRadarAdapter.normalizeCoachCode('WL'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode('RLWL'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode('RAC'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode('CNF'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode('GN'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode('-'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode('--'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode('0'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode('NA'), null);
+      assert.equal(RailRadarAdapter.normalizeCoachCode(null), null);
+    });
+
+    it('sanitizes berth numbers safely', () => {
+      assert.equal(RailRadarAdapter.sanitizeBerthNumber(32), 32);
+      assert.equal(RailRadarAdapter.sanitizeBerthNumber('32'), 32);
+      assert.equal(RailRadarAdapter.sanitizeBerthNumber('32 (LB)'), 32);
+      assert.equal(RailRadarAdapter.sanitizeBerthNumber('032'), 32);
+      assert.equal(RailRadarAdapter.sanitizeBerthNumber('-'), null);
+      assert.equal(RailRadarAdapter.sanitizeBerthNumber('0'), null);
+      assert.equal(RailRadarAdapter.sanitizeBerthNumber('NA'), null);
+      assert.equal(RailRadarAdapter.sanitizeBerthNumber(null), null);
+    });
+
+    it('normalizes berth types and rejects quota codes', () => {
+      assert.equal(RailRadarAdapter.normalizeBerthType('LB'), 'LB');
+      assert.equal(RailRadarAdapter.normalizeBerthType('MB'), 'MB');
+      assert.equal(RailRadarAdapter.normalizeBerthType('UB'), 'UB');
+      assert.equal(RailRadarAdapter.normalizeBerthType('SL'), 'SL');
+      assert.equal(RailRadarAdapter.normalizeBerthType('SU'), 'SU');
+      assert.equal(RailRadarAdapter.normalizeBerthType('LOWER'), 'LB');
+      assert.equal(RailRadarAdapter.normalizeBerthType('UPPER'), 'UB');
+      assert.equal(RailRadarAdapter.normalizeBerthType('WINDOW'), 'WS');
+
+      // Quotas must not be treated as berth types
+      assert.equal(RailRadarAdapter.normalizeBerthType('GN'), null);
+      assert.equal(RailRadarAdapter.normalizeBerthType('PQ'), null);
+      assert.equal(RailRadarAdapter.normalizeBerthType('RL'), null);
+      assert.equal(RailRadarAdapter.normalizeBerthType('CK'), null);
+      assert.equal(RailRadarAdapter.normalizeBerthType('TQ'), null);
+      assert.equal(RailRadarAdapter.normalizeBerthType('-'), null);
+    });
+
+    it('extracts coach, berth, and berthType from various status string formats', () => {
+      const cnfSlash = RailRadarAdapter.extractCoachAndBerthFromText('CNF / B4 / 32 / LB');
+      assert.equal(cnfSlash.coach, 'B4');
+      assert.equal(cnfSlash.berth, 32);
+      assert.equal(cnfSlash.berthType, 'LB');
+
+      const cnfQuota = RailRadarAdapter.extractCoachAndBerthFromText('B4, 32, GN');
+      assert.equal(cnfQuota.coach, 'B4');
+      assert.equal(cnfQuota.berth, 32);
+      assert.equal(cnfQuota.berthType, null); // GN quota is ignored
+
+      const cnfHyphen = RailRadarAdapter.extractCoachAndBerthFromText('B4-32');
+      assert.equal(cnfHyphen.coach, 'B4');
+      assert.equal(cnfHyphen.berth, 32);
+
+      const cnfSpace = RailRadarAdapter.extractCoachAndBerthFromText('CNF B4 32 LB');
+      assert.equal(cnfSpace.coach, 'B4');
+      assert.equal(cnfSpace.berth, 32);
+      assert.equal(cnfSpace.berthType, 'LB');
+
+      const ecSeat = RailRadarAdapter.extractCoachAndBerthFromText('CNF / EC / 14 / W');
+      assert.equal(ecSeat.coach, 'EC');
+      assert.equal(ecSeat.berth, 14);
+      assert.equal(ecSeat.berthType, 'WS');
+
+      const labeled = RailRadarAdapter.extractCoachAndBerthFromText('Coach: B4, Berth: 32');
+      assert.equal(labeled.coach, 'B4');
+      assert.equal(labeled.berth, 32);
+
+      const reverse = RailRadarAdapter.extractCoachAndBerthFromText('Berth 32, Coach B4');
+      assert.equal(reverse.coach, 'B4');
+      assert.equal(reverse.berth, 32);
+
+      const commaReverse = RailRadarAdapter.extractCoachAndBerthFromText('32, B4');
+      assert.equal(commaReverse.coach, 'B4');
+      assert.equal(commaReverse.berth, 32);
+
+      const rac = RailRadarAdapter.extractCoachAndBerthFromText('RAC / B1 / 23');
+      assert.equal(rac.coach, 'B1');
+      assert.equal(rac.berth, 23);
+
+      const wl = RailRadarAdapter.extractCoachAndBerthFromText('WL 45');
+      assert.equal(wl.coach, null);
+      assert.equal(wl.berth, null);
+    });
+
+    it('infers class-accurate berth types correctly', () => {
+      // 3A / SL (mod 8)
+      assert.equal(RailRadarAdapter.inferBerthType(1, 'B1', '3A'), 'LB');
+      assert.equal(RailRadarAdapter.inferBerthType(2, 'B1', '3A'), 'MB');
+      assert.equal(RailRadarAdapter.inferBerthType(3, 'B1', '3A'), 'UB');
+      assert.equal(RailRadarAdapter.inferBerthType(7, 'B1', '3A'), 'SL');
+      assert.equal(RailRadarAdapter.inferBerthType(8, 'B1', '3A'), 'SU');
+
+      // 2A (mod 6) - 2A has NO middle berths!
+      assert.equal(RailRadarAdapter.inferBerthType(1, 'A1', '2A'), 'LB');
+      assert.equal(RailRadarAdapter.inferBerthType(2, 'A1', '2A'), 'UB');
+      assert.equal(RailRadarAdapter.inferBerthType(3, 'A1', '2A'), 'LB');
+      assert.equal(RailRadarAdapter.inferBerthType(4, 'A1', '2A'), 'UB');
+      assert.equal(RailRadarAdapter.inferBerthType(5, 'A1', '2A'), 'SL');
+      assert.equal(RailRadarAdapter.inferBerthType(6, 'A1', '2A'), 'SU');
+
+      // 3E (mod 9)
+      assert.equal(RailRadarAdapter.inferBerthType(7, 'M1', '3E'), 'SL');
+      assert.equal(RailRadarAdapter.inferBerthType(8, 'M1', '3E'), 'SM');
+      assert.equal(RailRadarAdapter.inferBerthType(9, 'M1', '3E'), 'SU');
+
+      // CC (mod 5)
+      assert.equal(RailRadarAdapter.inferBerthType(1, 'C1', 'CC'), 'WS');
+      assert.equal(RailRadarAdapter.inferBerthType(2, 'C1', 'CC'), 'MS');
+      assert.equal(RailRadarAdapter.inferBerthType(3, 'C1', 'CC'), 'AS');
+    });
+
+    it('maps alternative PRS / RailRadar response fields into coach and berth', async () => {
+      const adapter = new RailRadarAdapter();
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = async (url: any) => {
+          const urlStr = String(url);
+          if (urlStr.includes('/pnr/')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                success: true,
+                data: {
+                  pnr: '6248193042',
+                  trainNumber: '12951',
+                  trainName: 'MUMBAI TEJAS RAJDHANI',
+                  travelClass: '3A',
+                  passengers: [
+                    // Field variation 1: currentCoachId & currentBerthNo
+                    {
+                      passengerSerialNumber: 1,
+                      currentCoachId: 'B4',
+                      currentBerthNo: 32,
+                      currentStatus: 'CNF',
+                      bookingStatus: 'CNF',
+                    },
+                    // Field variation 2: placeholder current values, coach & berth in bookingStatus
+                    {
+                      passengerSerialNumber: 2,
+                      currentCoach: '-',
+                      currentBerth: '-',
+                      bookingStatus: 'B4, 33, GN',
+                      currentStatus: 'CNF',
+                    },
+                    // Field variation 3: coach & berth in currentStatusDetails
+                    {
+                      passengerSerialNumber: 3,
+                      currentStatus: 'CNF',
+                      bookingStatus: 'WL 12',
+                      currentStatusDetails: 'CNF / B4 / 34 / UB',
+                    },
+                    // Field variation 4: bookingCoachId & bookingBerthNo
+                    {
+                      passengerSerialNumber: 4,
+                      bookingCoachId: 'B4',
+                      bookingBerthNo: 35,
+                      currentStatus: 'CNF',
+                      bookingStatus: 'CNF',
+                    },
+                    // Field variation 5: formatted coach and berth string "B-4", "36 (MB)"
+                    {
+                      passengerSerialNumber: 5,
+                      coach: 'B-4',
+                      berth: '36 (MB)',
+                      currentStatus: 'CNF',
+                    },
+                  ],
+                },
+              }),
+            } as any;
+          }
+          return { ok: false, status: 404 } as any;
+        };
+
+        const result = await adapter.getPnrStatus('6248193042');
+        assert.equal(result.passengers.length, 5);
+
+        // Passenger 1
+        assert.equal(result.passengers[0].coach, 'B4');
+        assert.equal(result.passengers[0].berthNumber, 32);
+        assert.equal(result.passengers[0].berthType, 'SU'); // 32 in 3A is SU
+        assert.equal(result.passengers[0].confirmed, true);
+
+        // Passenger 2
+        assert.equal(result.passengers[1].coach, 'B4');
+        assert.equal(result.passengers[1].berthNumber, 33);
+        assert.equal(result.passengers[1].berthType, 'LB'); // 33 in 3A is LB
+        assert.equal(result.passengers[1].confirmed, true);
+
+        // Passenger 3
+        assert.equal(result.passengers[2].coach, 'B4');
+        assert.equal(result.passengers[2].berthNumber, 34);
+        assert.equal(result.passengers[2].berthType, 'UB'); // From string
+        assert.equal(result.passengers[2].confirmed, true);
+
+        // Passenger 4
+        assert.equal(result.passengers[3].coach, 'B4');
+        assert.equal(result.passengers[3].berthNumber, 35);
+        assert.equal(result.passengers[3].berthType, 'UB');
+        assert.equal(result.passengers[3].confirmed, true);
+
+        // Passenger 5
+        assert.equal(result.passengers[4].coach, 'B4');
+        assert.equal(result.passengers[4].berthNumber, 36);
+        assert.equal(result.passengers[4].berthType, 'MB'); // Extracted from string
+        assert.equal(result.passengers[4].confirmed, true);
+
+        // userCoach should be derived
+        assert.equal(result.userCoach, 'B4');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('handles passengerList and seatNumber/coachNumber naming', async () => {
+      const adapter = new RailRadarAdapter();
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = async (url: any) => {
+          const urlStr = String(url);
+          if (urlStr.includes('/pnr/')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                success: true,
+                data: {
+                  pnr: '6248193042',
+                  trainNumber: '12002',
+                  trainName: 'Bhopal Shatabdi',
+                  class: 'CC',
+                  passengerList: [
+                    {
+                      sNo: 1,
+                      coachNumber: 'C1',
+                      seatNumber: 15,
+                      currentStatus: 'CNF',
+                      bookingStatus: 'CNF',
+                    },
+                  ],
+                },
+              }),
+            } as any;
+          }
+          return { ok: false, status: 404 } as any;
+        };
+
+        const result = await adapter.getPnrStatus('6248193042');
+        assert.equal(result.passengers.length, 1);
+        assert.equal(result.passengers[0].coach, 'C1');
+        assert.equal(result.passengers[0].berthNumber, 15);
+        assert.equal(result.passengers[0].berthType, 'WS'); // 15 % 5 = 0 -> Window Seat in CC
+        assert.equal(result.userCoach, 'C1');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
 });

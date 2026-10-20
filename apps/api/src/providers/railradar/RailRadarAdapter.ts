@@ -476,6 +476,219 @@ export class RailRadarAdapter implements TrainProvider {
   }
 
   /**
+   * Sanitizes raw string/number values from upstream railway APIs.
+   * Converts empty strings and common placeholder values ('-', 'NA', 'NONE', '0', etc.) to null.
+   */
+  static sanitizeRawValue(val: unknown): string | null {
+    if (val == null) return null;
+    const str = String(val).trim();
+    if (!str) return null;
+    const upper = str.toUpperCase();
+    if (['-', '--', '0', 'NA', 'N/A', 'N.A.', 'NONE', 'NULL', 'NIL', 'UNDEF'].includes(upper)) {
+      return null;
+    }
+    return str;
+  }
+
+  /**
+   * Normalizes an Indian Railways coach code (e.g. 'b-4' -> 'B4', 'S-02' -> 'S2', 'B 4' -> 'B4').
+   */
+  static normalizeCoachCode(val: unknown): string | null {
+    const sanitized = RailRadarAdapter.sanitizeRawValue(val);
+    if (!sanitized) return null;
+    let clean = sanitized.toUpperCase().replace(/\s+/g, '').replace(/-/g, '');
+    clean = clean.replace(/^([A-Z]+)0+([1-9][0-9]*)$/, '$1$2');
+
+    const validCoachRegex = /^(?:HA[0-9]|HB[0-9]|AB[0-9]|[BASHMCDEGKJ][0-9]{1,2}|EC|EA|EV|FC|CC|GS|GEN|PC)$/;
+    if (validCoachRegex.test(clean)) {
+      return clean;
+    }
+    return null;
+  }
+
+  /**
+   * Sanitizes and extracts numeric or clean berth number (e.g. 32, '32', '32 (LB)' -> 32).
+   */
+  static sanitizeBerthNumber(val: unknown): number | string | null {
+    const sanitized = RailRadarAdapter.sanitizeRawValue(val);
+    if (!sanitized) return null;
+    const digitsOnly = sanitized.replace(/\D/g, '');
+    if (digitsOnly) {
+      const num = parseInt(digitsOnly, 10);
+      if (!isNaN(num) && num > 0 && num <= 150) {
+        return num;
+      }
+    }
+    return sanitized;
+  }
+
+  /**
+   * Normalizes berth type to canonical code if valid, or null if it is a quota or invalid.
+   */
+  static normalizeBerthType(val: unknown): string | null {
+    const sanitized = RailRadarAdapter.sanitizeRawValue(val);
+    if (!sanitized) return null;
+    const upper = sanitized.toUpperCase().replace(/[^A-Z]/g, '');
+
+    const quotasAndStatuses = new Set([
+      'GN', 'PQ', 'RL', 'CK', 'TQ', 'PT', 'DP', 'SS', 'DF', 'HP', 'LD', 'HO',
+      'RC', 'RAC', 'WL', 'CNF', 'CAN', 'MOD', 'NOSB', 'NW', 'RS', 'OS'
+    ]);
+    if (quotasAndStatuses.has(upper)) {
+      return null;
+    }
+
+    if (['LB', 'MB', 'UB', 'SL', 'SU', 'SM', 'WS', 'MS', 'AS', 'CP', 'CB'].includes(upper)) {
+      return upper;
+    }
+
+    if (upper === 'LOWER' || upper === 'L') return 'LB';
+    if (upper === 'MIDDLE' || upper === 'M') return 'MB';
+    if (upper === 'UPPER' || upper === 'U') return 'UB';
+    if (upper === 'SIDELOWER' || upper === 'SL') return 'SL';
+    if (upper === 'SIDEUPPER' || upper === 'SU') return 'SU';
+    if (upper === 'SIDEMIDDLE' || upper === 'SM') return 'SM';
+    if (upper === 'WINDOW' || upper === 'WINDOWSEAT' || upper === 'W') return 'WS';
+    if (upper === 'AISLE' || upper === 'AISLESEAT' || upper === 'A') return 'AS';
+    if (upper === 'CABIN') return 'CB';
+    if (upper === 'COUPE') return 'CP';
+
+    return null;
+  }
+
+  /**
+   * Extracts coach, berth, and berthType from status detail text strings.
+   */
+  static extractCoachAndBerthFromText(text: string): {
+    coach: string | null;
+    berth: number | string | null;
+    berthType: string | null;
+  } {
+    let coach: string | null = null;
+    let berth: number | string | null = null;
+    let berthType: string | null = null;
+
+    if (!text || typeof text !== 'string') {
+      return { coach, berth, berthType };
+    }
+
+    // Pattern 1: Explicit labels like "Coach: B4, Berth: 32" or "COACH B4 BERTH 32"
+    const labeledCoachMatch = text.match(/(?:COACH|CH|COACH NO|COACH ID)\s*[:#-]?\s*([A-Za-z0-9-]+)\b/i);
+    if (labeledCoachMatch) {
+      const candidate = RailRadarAdapter.normalizeCoachCode(labeledCoachMatch[1]);
+      if (candidate) coach = candidate;
+    }
+
+    const labeledBerthMatch = text.match(/(?:BERTH|SEAT|BTH|ST|BERTH NO|SEAT NO)\s*[:#-]?\s*([0-9]{1,3})\b/i);
+    if (labeledBerthMatch) {
+      const candidate = RailRadarAdapter.sanitizeBerthNumber(labeledBerthMatch[1]);
+      if (candidate != null) berth = candidate;
+    }
+
+    // Pattern 2: Delimited coach and berth e.g. "CNF / B4 / 32 / LB", "B4, 32, GN", "B4-32", "CNF B4 32", "EC, 14", "HA1, 10"
+    if (!coach || !berth) {
+      const coachBerthRegex = /\b(HA[0-9]|HB[0-9]|AB[0-9]|[BASHMCDEGKJ]-?[0-9]{1,2}|EC|EA|EV|FC|CC|GS|GEN)\s*[,/ -]\s*([0-9]{1,3})(?:\s*[,/ -]\s*([A-Za-z]{1,12}))?\b/i;
+      const match = text.match(coachBerthRegex);
+      if (match) {
+        if (!coach) coach = RailRadarAdapter.normalizeCoachCode(match[1]);
+        if (!berth) berth = RailRadarAdapter.sanitizeBerthNumber(match[2]);
+        if (!berthType && match[3]) {
+          berthType = RailRadarAdapter.normalizeBerthType(match[3]);
+        }
+      }
+    }
+
+    // Pattern 3: Berth then Coach: e.g. "32, B4" or "32 / B4"
+    if (!coach || !berth) {
+      const berthCoachRegex = /\b([0-9]{1,3})\s*[,/ -]\s*(HA[0-9]|HB[0-9]|AB[0-9]|[BASHMCDEGKJ]-?[0-9]{1,2}|EC|EA|EV|FC|CC|GS|GEN)\b/i;
+      const match = text.match(berthCoachRegex);
+      if (match) {
+        if (!berth) berth = RailRadarAdapter.sanitizeBerthNumber(match[1]);
+        if (!coach) coach = RailRadarAdapter.normalizeCoachCode(match[2]);
+      }
+    }
+
+    // Pattern 4: Standalone coach code if still missing
+    if (!coach) {
+      const standaloneCoachRegex = /\b(HA[0-9]|HB[0-9]|AB[0-9]|[BASHMCDEGKJ][0-9]{1,2}|EC|EA|EV|FC|CC)\b/i;
+      const match = text.match(standaloneCoachRegex);
+      if (match) {
+        coach = RailRadarAdapter.normalizeCoachCode(match[1]);
+      }
+    }
+
+    // Pattern 5: Standalone berth in CNF / CONFIRMED context
+    if (!berth && (text.toUpperCase().includes('CNF') || text.toUpperCase().includes('CONFIRM') || coach != null)) {
+      const standaloneBerthMatch = text.match(/(?:CNF|CONFIRMED|RAC)[ /-]+([0-9]{1,3})\b/i);
+      if (standaloneBerthMatch) {
+        berth = RailRadarAdapter.sanitizeBerthNumber(standaloneBerthMatch[1]);
+      }
+    }
+
+    // Pattern 6: Extract berth type from anywhere in string if not yet identified
+    if (!berthType) {
+      const btMatch = text.match(/\b(LB|MB|UB|SL|SU|SM|WS|MS|AS|CP|CB|LOWER|MIDDLE|UPPER|SIDE\s+LOWER|SIDE\s+UPPER|SIDE\s+MIDDLE|WINDOW|AISLE)\b/i);
+      if (btMatch) {
+        berthType = RailRadarAdapter.normalizeBerthType(btMatch[1]);
+      }
+    }
+
+    return { coach, berth, berthType };
+  }
+
+  /**
+   * Infers standard Indian Railways berth type from berth number and travel/coach class.
+   */
+  static inferBerthType(berthNum: number, coachCode?: string | null, travelClass?: string | null): string {
+    const coachUpper = (coachCode || '').toUpperCase();
+    const classUpper = (travelClass || '').toUpperCase();
+
+    // 2A (AC 2-Tier): 6 berths per bay (1, 3: LB, 2, 4: UB, 5: SL, 6: SU)
+    if (coachUpper.startsWith('A') || classUpper.includes('2A') || classUpper.includes('2-TIER') || classUpper.includes('2 TIER')) {
+      const mod = berthNum % 6;
+      if (mod === 1 || mod === 3) return 'LB';
+      if (mod === 2 || mod === 4) return 'UB';
+      if (mod === 5) return 'SL';
+      return 'SU';
+    }
+
+    // 3E (AC 3 Economy): 9 berths per bay (1, 4: LB, 2, 5: MB, 3, 6: UB, 7: SL, 8: SM, 9: SU)
+    if (coachUpper.startsWith('M') || classUpper.includes('3E') || classUpper.includes('ECONOMY')) {
+      const mod = berthNum % 9;
+      if (mod === 1 || mod === 4) return 'LB';
+      if (mod === 2 || mod === 5) return 'MB';
+      if (mod === 3 || mod === 6) return 'UB';
+      if (mod === 7) return 'SL';
+      if (mod === 8) return 'SM';
+      return 'SU';
+    }
+
+    // 1A (AC First Class): 4 berths per bay / cabin (1, 3: LB, 2, 4: UB)
+    if (coachUpper.startsWith('H') || classUpper.includes('1A') || classUpper.includes('FIRST')) {
+      const mod = berthNum % 4;
+      if (mod === 1 || mod === 3) return 'LB';
+      return 'UB';
+    }
+
+    // CC / 2S / EC (Chair Car): 5 seats per row
+    if (coachUpper.startsWith('C') || coachUpper.startsWith('D') || coachUpper.startsWith('E') ||
+        classUpper.includes('CC') || classUpper.includes('2S') || classUpper.includes('CHAIR') || classUpper.includes('EC')) {
+      const mod = berthNum % 5;
+      if (mod === 1 || mod === 0) return 'WS';
+      if (mod === 2) return 'MS';
+      return 'AS';
+    }
+
+    // Standard 3A, SL, Sleeper, Garib Rath: 8 berths per bay
+    const mod8 = berthNum % 8;
+    if (mod8 === 1 || mod8 === 4) return 'LB';
+    if (mod8 === 2 || mod8 === 5) return 'MB';
+    if (mod8 === 3 || mod8 === 6) return 'UB';
+    if (mod8 === 7) return 'SL';
+    return 'SU';
+  }
+
+  /**
    * Normalizes a journey date to YYYY-MM-DD.
    * If empty, past, or invalid, returns today's date in IST.
    */
@@ -727,80 +940,199 @@ export class RailRadarAdapter implements TrainProvider {
 
     const trainNum = String(d.trainNumber || d.train_number || d.train?.number || '').trim();
     const trainName = d.trainName || d.train_name || d.train?.name || (trainNum ? `Train ${trainNum}` : 'Express');
-    const journeyDate = d.journeyDate || d.dateOfJourney || d.doj || d.date || '';
+    const journeyDate = d.journeyDate || d.dateOfJourney || d.doj || d.date || d.train?.journeyDate || '';
 
-    const srcCode = d.sourceStation?.code || d.sourceStation || d.from || d.boardingPoint?.code || d.boardingPoint || 'SRC';
-    const srcName = d.sourceStation?.name || d.sourceStationName || d.fromName || d.boardingPoint?.name || d.boardingPointName || srcCode;
-    const destCode = d.destinationStation?.code || d.destinationStation || d.to || d.reservationUpto?.code || d.reservationUpto || 'DEST';
-    const destName = d.destinationStation?.name || d.destinationStationName || d.toName || d.reservationUpto?.name || d.reservationUptoName || destCode;
+    const srcCode = d.sourceStation?.code || d.sourceStation || d.from || d.boardingPoint?.code || d.boardingPoint || d.train?.source?.code || d.train?.boardingPoint?.code || 'SRC';
+    const srcName = d.sourceStation?.name || d.sourceStationName || d.fromName || d.boardingPoint?.name || d.boardingPointName || d.train?.source?.name || d.train?.boardingPoint?.name || srcCode;
+    const destCode = d.destinationStation?.code || d.destinationStation || d.to || d.reservationUpto?.code || d.reservationUpto || d.train?.destination?.code || d.train?.reservationUpto?.code || 'DEST';
+    const destName = d.destinationStation?.name || d.destinationStationName || d.toName || d.reservationUpto?.name || d.reservationUptoName || d.train?.destination?.name || d.train?.reservationUpto?.name || destCode;
 
-    const travelClass = d.class || d.journeyClass || d.travelClass || '';
-    const quota = d.quota || 'GN';
+    const travelClass = d.class || d.journeyClass || d.travelClass || d.train?.journeyClass || '';
 
     const chartPrepared = Boolean(
       d.chartPrepared === true ||
+      d.charting?.isPrepared === true ||
       d.chartStatus === 'CHART PREPARED' ||
       d.chart_status === 'CHART PREPARED' ||
-      String(d.chartStatus || '').toUpperCase().includes('PREPARED')
+      (String(d.charting?.status || '').toUpperCase().includes('PREPARED') && !String(d.charting?.status || '').toUpperCase().includes('NOT')) ||
+      (String(d.chartStatus || '').toUpperCase().includes('PREPARED') && !String(d.chartStatus || '').toUpperCase().includes('NOT'))
     );
 
-    const rawPassengers: any[] = Array.isArray(d.passengers) ? d.passengers : (Array.isArray(d.passengerList) ? d.passengerList : []);
+    const rawPassengers: any[] = Array.isArray(d.passengers)
+      ? d.passengers
+      : Array.isArray(d.passengerList)
+      ? d.passengerList
+      : Array.isArray(d.passenger_list)
+      ? d.passenger_list
+      : Array.isArray(d.passengerInfo)
+      ? d.passengerInfo
+      : Array.isArray(d.passengersList)
+      ? d.passengersList
+      : Array.isArray(d.Passenger)
+      ? d.Passenger
+      : Array.isArray(d.passenger)
+      ? d.passenger
+      : [];
+
     const passengers: PassengerStatus[] = rawPassengers.map((p, idx) => {
-      const pNum = p.passengerSerialNumber || p.no || p.passengerNumber || idx + 1;
-      const bStatus = p.bookingStatus || p.booking_status || 'CNF';
-      const cStatus = p.currentStatus || p.current_status || bStatus;
-      let coach = p.currentCoach || p.coach || p.bookingCoach || null;
-      let berth = p.currentBerth || p.berthNumber || p.berth || p.bookingBerth || null;
-      let berthType = p.berthType || p.berth_type || null;
+      const pNum = p.passengerSerialNumber || p.passengerNumber || p.serialNumber || p.no || p.sNo || p.number || idx + 1;
+      const bStatus = RailRadarAdapter.sanitizeRawValue(p.booking?.formatted || p.booking?.status || p.bookingStatus || p.booking_status) || 'CNF';
+      const cStatus = RailRadarAdapter.sanitizeRawValue(p.current?.formatted || p.current?.status || p.currentStatus || p.current_status) || bStatus;
 
-      // Extract coach & berth if encoded in status strings (e.g., "B4, 32", "CNF/B4/32/MB", "B4-32")
-      if (!coach || !berth) {
-        const statusToInspect = [cStatus, bStatus].filter(Boolean).join(' ');
-        const match = statusToInspect.match(/\b([A-Z]+[0-9]+)\s*[,/ -]\s*([0-9]{1,3})(?:\s*[,/ -]\s*([A-Z]{2}))?\b/i);
-        if (match) {
-          if (!coach) coach = match[1].toUpperCase();
-          if (!berth) berth = parseInt(match[2], 10);
-          if (!berthType && match[3]) berthType = match[3].toUpperCase();
-        }
+      // Check all known PRS and RailRadar coach property names including nested objects (p.current, p.booking)
+      let coach = RailRadarAdapter.normalizeCoachCode(
+        p.current?.coachId ??
+        p.current?.coach ??
+        p.current?.coachNumber ??
+        p.booking?.coachId ??
+        p.booking?.coach ??
+        p.booking?.coachNumber ??
+        p.currentCoach ??
+        p.currentCoachId ??
+        p.coach ??
+        p.coachId ??
+        p.coach_id ??
+        p.coachPosition ??
+        p.coachNumber ??
+        p.coach_number ??
+        p.coachName ??
+        p.coachNo ??
+        p.coach_no ??
+        p.allocatedCoach ??
+        p.bookingCoach ??
+        p.bookingCoachId ??
+        p.booking_coach
+      );
+
+      // Check all known PRS and RailRadar berth/seat property names including nested objects (p.current, p.booking)
+      let berth = RailRadarAdapter.sanitizeBerthNumber(
+        p.current?.berthNo ??
+        p.current?.berth ??
+        p.current?.berthNumber ??
+        p.current?.seatNo ??
+        p.current?.seatNumber ??
+        p.booking?.berthNo ??
+        p.booking?.berth ??
+        p.booking?.berthNumber ??
+        p.booking?.seatNo ??
+        p.booking?.seatNumber ??
+        p.currentBerth ??
+        p.currentBerthNo ??
+        p.berthNumber ??
+        p.berth ??
+        p.berthNo ??
+        p.berth_no ??
+        p.berth_number ??
+        p.seatNumber ??
+        p.seatNo ??
+        p.seat_no ??
+        p.seat ??
+        p.currentSeat ??
+        p.allocatedBerth ??
+        p.bookingBerth ??
+        p.bookingBerthNo ??
+        p.booking_berth_no ??
+        p.booking_berth ??
+        p.bookingSeat
+      );
+
+      let berthType = RailRadarAdapter.normalizeBerthType(
+        p.berthCode ??
+        p.berth_code ??
+        p.booking?.berthCode ??
+        p.current?.berthCode ??
+        p.booking?.berth_code ??
+        p.current?.berth_code ??
+        p.berthType ??
+        p.berth_type ??
+        p.seatType ??
+        p.seat_type
+      );
+
+      // Collect all status detail text strings to inspect for encoded coach and berth (e.g. "B4, 32", "CNF/A1/44", "CNF/A1/44/UB/GN")
+      const textToInspect = [
+        p.current?.formatted,
+        p.booking?.formatted,
+        p.current?.status,
+        p.booking?.status,
+        p.currentStatusDetails,
+        p.bookingStatusDetails,
+        p.current_status_details,
+        p.booking_status_details,
+        p.statusDetails,
+        p.status_details,
+        cStatus,
+        bStatus,
+        p.status,
+        typeof p.currentBerth === 'string' ? p.currentBerth : null,
+        typeof p.berth === 'string' ? p.berth : null,
+        typeof p.currentCoach === 'string' ? p.currentCoach : null,
+        typeof p.coach === 'string' ? p.coach : null,
+      ]
+        .filter((val): val is string => typeof val === 'string' && Boolean(val.trim()))
+        .join(' | ');
+
+      if (!coach || berth == null || !berthType) {
+        const extracted = RailRadarAdapter.extractCoachAndBerthFromText(textToInspect);
+        if (!coach && extracted.coach) coach = extracted.coach;
+        if (berth == null && extracted.berth != null) berth = extracted.berth;
+        if (!berthType && extracted.berthType) berthType = extracted.berthType;
       }
 
-      if (coach && typeof coach === 'string') {
-        coach = coach.trim().toUpperCase();
+      // If booking coach/berth were set and current status is confirmed but current coach was empty, fall back to booking
+      if (!coach && (cStatus.toUpperCase().includes('CNF') || cStatus.toUpperCase().includes('CONFIRM') || bStatus.toUpperCase().includes('CNF'))) {
+        const fallbackCoach = RailRadarAdapter.normalizeCoachCode(p.booking?.coachId ?? p.booking?.coach ?? p.bookingCoach ?? p.bookingCoachId ?? p.booking_coach);
+        if (fallbackCoach) coach = fallbackCoach;
+      }
+      if (berth == null && (cStatus.toUpperCase().includes('CNF') || cStatus.toUpperCase().includes('CONFIRM') || bStatus.toUpperCase().includes('CNF'))) {
+        const fallbackBerth = RailRadarAdapter.sanitizeBerthNumber(p.booking?.berthNo ?? p.booking?.berth ?? p.bookingBerth ?? p.bookingBerthNo ?? p.booking_berth_no ?? p.booking_berth);
+        if (fallbackBerth != null) berth = fallbackBerth;
       }
 
-      let cleanBerth: number | string | null = null;
-      if (berth != null) {
-        const num = parseInt(String(berth).replace(/\D/g, ''), 10);
-        cleanBerth = !isNaN(num) && num > 0 ? num : berth;
-      }
-
-      const isConfirmed = cStatus.toUpperCase().includes('CNF') || cStatus.toUpperCase().includes('CONFIRM');
+      const isConfirmed =
+        p.isConfirmed === true ||
+        cStatus.toUpperCase().includes('CNF') ||
+        cStatus.toUpperCase().includes('CONFIRM') ||
+        bStatus.toUpperCase().includes('CNF') ||
+        bStatus.toUpperCase().includes('CONFIRM') ||
+        Boolean(coach && berth != null);
 
       // Infer standard Indian Railways berth type if numeric and missing
-      if (!berthType && typeof cleanBerth === 'number') {
-        const mod8 = cleanBerth % 8;
-        if (mod8 === 1 || mod8 === 4) berthType = 'LB';
-        else if (mod8 === 2 || mod8 === 5) berthType = 'MB';
-        else if (mod8 === 3 || mod8 === 6) berthType = 'UB';
-        else if (mod8 === 7) berthType = 'SL';
-        else if (mod8 === 0) berthType = 'SU';
+      if (!berthType && typeof berth === 'number') {
+        berthType = RailRadarAdapter.inferBerthType(berth, coach, travelClass);
       }
 
+      // If current status is purely waitlisted and not confirmed, clear spurious berth/coach
+      const isPureWaitlist =
+        (cStatus.toUpperCase().includes('WL') || cStatus.toUpperCase().includes('WAIT')) &&
+        !cStatus.toUpperCase().includes('CNF') &&
+        !cStatus.toUpperCase().includes('CONFIRM') &&
+        !cStatus.toUpperCase().includes('RAC');
+      if (isPureWaitlist && !cStatus.toUpperCase().includes('/')) {
+        coach = null;
+        berth = null;
+      }
+
+      const bookingCoach = RailRadarAdapter.normalizeCoachCode(p.booking?.coachId ?? p.booking?.coach ?? p.bookingCoach ?? p.bookingCoachId ?? p.booking_coach);
+      const bookingBerth = RailRadarAdapter.sanitizeBerthNumber(p.booking?.berthNo ?? p.booking?.berth ?? p.bookingBerth ?? p.bookingBerthNo ?? p.booking_berth_no ?? p.booking_berth);
+
       return {
-        passengerNumber: pNum,
+        passengerNumber: Number(pNum) || idx + 1,
         bookingStatus: bStatus,
-        bookingCoach: p.bookingCoach || null,
-        bookingBerth: p.bookingBerth || null,
+        bookingCoach: bookingCoach || null,
+        bookingBerth: bookingBerth ?? null,
         currentStatus: cStatus,
-        coach,
-        berthNumber: cleanBerth,
-        berthType,
+        coach: coach || null,
+        berthNumber: berth ?? null,
+        berthType: berthType || null,
         confirmed: isConfirmed,
         // PII Data Minimization (Phase 1): Redact age and gender from public response
         age: null,
         gender: null,
       };
     });
+
+    const quota = rawPassengers[0]?.booking?.quota || rawPassengers[0]?.current?.quota || d.quota || d.train?.quota || 'GN';
 
     const userCoach = passengers.find(p => p.coach)?.coach || null;
     const bookingStatus = d.bookingStatus || (passengers[0]?.currentStatus) || 'CONFIRMED';

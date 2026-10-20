@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { DarkModeToggle } from '@/components/common/DarkModeToggle';
@@ -48,7 +48,8 @@ const DEFAULT_RAKE: CoachRakeItem[] = [
 ];
 
 function getCoachClass(coachCode: string, rake?: CoachRakeItem[], travelClass?: string): string {
-  const rakeItem = rake?.find((r) => r.code.toUpperCase() === coachCode.toUpperCase());
+  const cleanCode = (coachCode || '').toUpperCase().replace(/\s+|-/g, '');
+  const rakeItem = rake?.find((r) => r.code.toUpperCase().replace(/\s+|-/g, '') === cleanCode);
   if (rakeItem?.classType) {
     const ct = rakeItem.classType.toUpperCase();
     if (ct.includes('3A') || ct.includes('3-TIER') || ct.includes('3 TIER')) return '3A';
@@ -62,13 +63,15 @@ function getCoachClass(coachCode: string, rake?: CoachRakeItem[], travelClass?: 
     if (ct.includes('EOG') || ct.includes('LPR')) return 'EOG';
     if (ct.includes('PC')) return 'PC';
   }
-  const code = (coachCode || '').toUpperCase();
+  const code = cleanCode;
   if (code.startsWith('B')) return '3A';
   if (code.startsWith('M')) return '3E';
   if (code.startsWith('A')) return '2A';
-  if (code.startsWith('H')) return '1A';
+  if (code.startsWith('H') || code.startsWith('FC')) return '1A';
   if (code.startsWith('S') && !code.startsWith('SLR')) return 'SL';
-  if (code.startsWith('C') || code.startsWith('D')) return 'CC';
+  if (code.startsWith('C') || code.startsWith('D') || code.startsWith('J') || code.startsWith('K')) return 'CC';
+  if (code.startsWith('EC') || code.startsWith('EA') || code.startsWith('EV') || (code.startsWith('E') && !code.startsWith('ENG') && !code.startsWith('EOG'))) return 'CC';
+  if (code.startsWith('G') && !code.startsWith('GEN') && !code.startsWith('GS')) return '3A';
   if (code.startsWith('GEN') || code.startsWith('GS')) return 'GEN';
   if (code.startsWith('ENG') || code.startsWith('LOCO')) return 'LOCO';
   if (code === 'PC') return 'PC';
@@ -477,29 +480,65 @@ export default function PnrStatusPage() {
 
   // User's allocated coach (if any) and interactive coach selection
   const userCoach = pnrData?.userCoach || pnrData?.passengers?.find((p) => p.coach)?.coach || null;
-  const displayRake = (pnrData?.rakeComposition && pnrData.rakeComposition.length > 0)
+  const rawRake = (pnrData?.rakeComposition && pnrData.rakeComposition.length > 0)
     ? pnrData.rakeComposition
     : DEFAULT_RAKE;
+
+  // Guarantee userCoach is included in displayRake so it can always be inspected and selected
+  const displayRake = useMemo(() => {
+    if (!userCoach) return rawRake;
+    const cleanUserCoach = userCoach.toUpperCase().replace(/\s+|-/g, '');
+    const exists = rawRake.some((c) => c.code.toUpperCase().replace(/\s+|-/g, '') === cleanUserCoach);
+    if (exists) return rawRake;
+    const userCoachClass = getCoachClass(cleanUserCoach, rawRake, pnrData?.travelClass);
+    return [
+      ...rawRake,
+      {
+        position: rawRake.length + 1,
+        code: cleanUserCoach,
+        classType: userCoachClass,
+        className: `Coach ${cleanUserCoach}`,
+        totalBerths: getCoachLayoutMeta(userCoachClass).totalBerths,
+        hasSeats: true,
+      },
+    ];
+  }, [rawRake, userCoach, pnrData?.travelClass]);
+
   const activeCoach = selectedCoach || userCoach || (displayRake.find((c) => !['ENG', 'LOCO', 'EOG', 'LPR'].includes(c.code))?.code) || displayRake[0]?.code || 'B4';
-  const isUserActiveCoach = Boolean(userCoach && activeCoach.toUpperCase() === userCoach.toUpperCase());
-  const activeCoachIndex = displayRake.findIndex((c) => c.code.toUpperCase() === activeCoach.toUpperCase());
+  const isUserActiveCoach = Boolean(
+    userCoach &&
+    activeCoach.toUpperCase().replace(/\s+|-/g, '') === userCoach.toUpperCase().replace(/\s+|-/g, '')
+  );
+  const activeCoachIndex = displayRake.findIndex(
+    (c) => c.code.toUpperCase().replace(/\s+|-/g, '') === activeCoach.toUpperCase().replace(/\s+|-/g, '')
+  );
   const activeCoachItem = activeCoachIndex !== -1 ? displayRake[activeCoachIndex] : undefined;
   const coachClass = getCoachClass(activeCoach, displayRake, pnrData?.travelClass);
   const layoutMeta = getCoachLayoutMeta(coachClass, activeCoachItem?.totalBerths);
 
   const userPassengersInCoach = (pnrData?.passengers || []).filter(
-    (p) => p.coach && p.coach.toUpperCase() === activeCoach.toUpperCase() && p.berthNumber != null
+    (p) => p.coach &&
+      p.coach.toUpperCase().replace(/\s+|-/g, '') === activeCoach.toUpperCase().replace(/\s+|-/g, '') &&
+      p.berthNumber != null
   );
+
+  const maxPassengerBerthInCoach = userPassengersInCoach.reduce((max, p) => {
+    const num = parseInt(String(p.berthNumber).replace(/\D/g, ''), 10);
+    return !isNaN(num) ? Math.max(max, num) : max;
+  }, 0);
+  const effectiveTotalBerths = Math.max(layoutMeta.totalBerths, maxPassengerBerthInCoach);
+  const effectiveTotalBays = Math.max(1, Math.ceil(effectiveTotalBerths / layoutMeta.berthsPerBay));
+
   const userPrimaryBerthNum = userPassengersInCoach[0]
     ? parseInt(String(userPassengersInCoach[0].berthNumber).replace(/\D/g, ''), 10)
     : null;
   const userPrimaryBay = (userPrimaryBerthNum && !isNaN(userPrimaryBerthNum) && userPrimaryBerthNum > 0)
-    ? Math.min(layoutMeta.totalBays, Math.max(1, Math.ceil(userPrimaryBerthNum / layoutMeta.berthsPerBay)))
+    ? Math.min(effectiveTotalBays, Math.max(1, Math.ceil(userPrimaryBerthNum / layoutMeta.berthsPerBay)))
     : 1;
 
   const currentBay = selectedBay || userPrimaryBay || 1;
   const bayStartBerth = (currentBay - 1) * layoutMeta.berthsPerBay + 1;
-  const bayEndBerth = Math.min(currentBay * layoutMeta.berthsPerBay, layoutMeta.totalBerths);
+  const bayEndBerth = Math.min(currentBay * layoutMeta.berthsPerBay, effectiveTotalBerths);
 
   const bayBerths: Array<{ num: number; type: string }> = [];
   for (let n = bayStartBerth; n <= bayEndBerth; n++) {
@@ -1177,8 +1216,8 @@ export default function PnrStatusPage() {
                     <div className="overflow-x-auto pb-2">
                       <div className="flex items-center gap-1.5 min-w-[720px] py-2">
                         {displayRake.map((coach, idx) => {
-                          const isThisUserCoach = userCoach && coach.code.toUpperCase() === userCoach.toUpperCase();
-                          const isSelected = coach.code.toUpperCase() === activeCoach.toUpperCase();
+                          const isThisUserCoach = userCoach && coach.code.toUpperCase().replace(/\s+|-/g, '') === userCoach.toUpperCase().replace(/\s+|-/g, '');
+                          const isSelected = coach.code.toUpperCase().replace(/\s+|-/g, '') === activeCoach.toUpperCase().replace(/\s+|-/g, '');
                           const isLoco = coach.code === 'ENG' || coach.classType === 'LOCO' || coach.code === 'LOCO';
                           const isPowerCar = coach.code === 'EOG' || coach.code === 'LPR' || coach.code === 'SLRD';
                           const isPantry = coach.code === 'PC';
@@ -1305,7 +1344,7 @@ export default function PnrStatusPage() {
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-space-xs">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-heading-md text-body-md font-semibold text-on-surface">
-                              Inside Coach {activeCoach} · Bay {currentBay} of {layoutMeta.totalBays}
+                              Inside Coach {activeCoach} · Bay {currentBay} of {effectiveTotalBays}
                             </span>
                             <span className="text-on-surface-variant font-body-sm text-body-sm">
                               (Berths {bayStartBerth}–{bayEndBerth})
@@ -1327,12 +1366,12 @@ export default function PnrStatusPage() {
                               <span>Prev Bay</span>
                             </button>
                             <span className="px-2 font-label text-label text-text-tertiary">
-                              {currentBay} / {layoutMeta.totalBays}
+                              {currentBay} / {effectiveTotalBays}
                             </span>
                             <button
                               type="button"
-                              disabled={currentBay >= layoutMeta.totalBays}
-                              onClick={() => setSelectedBay(Math.min(layoutMeta.totalBays, currentBay + 1))}
+                              disabled={currentBay >= effectiveTotalBays}
+                              onClick={() => setSelectedBay(Math.min(effectiveTotalBays, currentBay + 1))}
                               className="px-2 py-1 rounded bg-surface-elevated hover:bg-surface-container disabled:opacity-40 disabled:pointer-events-none text-on-surface font-label text-label border border-border transition-colors flex items-center gap-1"
                             >
                               <span>Next Bay</span>
@@ -1378,10 +1417,13 @@ export default function PnrStatusPage() {
                             : 'grid-cols-4 sm:grid-cols-8'
                         }`}>
                           {bayBerths.map((seat) => {
-                            const matchedPassengerIndex = pnrData.passengers.findIndex(
-                              (p) => (p.coach ? p.coach.toUpperCase() === activeCoach.toUpperCase() : isUserActiveCoach) &&
-                                    String(p.berthNumber) === String(seat.num)
-                            );
+                            const matchedPassengerIndex = pnrData.passengers.findIndex((p) => {
+                              const coachMatch = p.coach
+                                ? p.coach.toUpperCase().replace(/\s+|-/g, '') === activeCoach.toUpperCase().replace(/\s+|-/g, '')
+                                : isUserActiveCoach;
+                              const pBerthNum = p.berthNumber != null ? parseInt(String(p.berthNumber).replace(/\D/g, ''), 10) : null;
+                              return coachMatch && pBerthNum !== null && !isNaN(pBerthNum) && pBerthNum === seat.num;
+                            });
                             const isAllocated = matchedPassengerIndex !== -1;
 
                             if (isAllocated) {
