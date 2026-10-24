@@ -481,10 +481,10 @@ export default function AnalyticsPage() {
                 <h2 className="text-heading-md font-heading-md text-primary tracking-tight">
                   Punctuality Analysis
                 </h2>
-                <span className="px-2 py-0.5 rounded bg-surface border border-border text-label font-label text-secondary">IR CTC Model</span>
+                <span className="px-2 py-0.5 rounded bg-surface border border-border text-label font-label text-secondary">Timetable Analysis</span>
               </div>
               <p className="text-body-sm font-body-sm text-secondary mt-0.5">
-                Real-time headway clearance and corridor compliance
+                Real-time timetable adherence and schedule punctuality
               </p>
 
               <div className="mt-6 space-y-4">
@@ -522,12 +522,12 @@ export default function AnalyticsPage() {
                 {/* Metric 3 */}
                 <div className="p-3.5 rounded-lg border border-border bg-surface flex items-center justify-between">
                   <div>
-                    <span className="text-label font-label uppercase tracking-wider text-outline">Signal & Headway Compliance</span>
+                    <span className="text-label font-label uppercase tracking-wider text-outline">Schedule Adherence &amp; Punctuality</span>
                     <div className="text-heading-lg font-heading-lg text-primary tracking-tight tnum mt-0.5">
                       {delayMinutes <= 0 ? 'Clear (On Time)' : delayMinutes <= 15 ? `Nominal (+${delayMinutes}m)` : `Caution (+${delayMinutes}m)`}
                     </div>
                     <span className="text-label font-label text-secondary">
-                      {delayMinutes <= 0 ? 'Track section headway: Clear' : 'Track section headway spacing active'}
+                      {delayMinutes <= 0 ? 'Schedule adherence: On Time' : 'Schedule variance recorded'}
                     </span>
                   </div>
                   <span className={`w-3 h-3 rounded-full ${delayMinutes <= 15 ? 'bg-success' : 'bg-warning'}`}></span>
@@ -536,8 +536,8 @@ export default function AnalyticsPage() {
               </div>
             </div>
             <div className="mt-6 pt-3 border-t border-border flex items-center justify-between text-label font-label text-secondary">
-              <span>Corridor Signaling: Standard Block Protection</span>
-              <span className="text-success font-medium">Braking Distance: Nominal</span>
+              <span>Timetable Schedule Analysis</span>
+              <span className="text-secondary font-medium">Station Halt Records</span>
             </div>
           </div>
 

@@ -151,7 +151,7 @@ export default function CompanionPage() {
         ? landmarks.map((l, i) => `${i + 1}. ${l.title} (${l.categoryLabel})\n   ${l.description}\n   Coordinates: ${l.telemetryData.coordinates || 'N/A'}`)
         : ['No cataloged scenic landmarks along this corridor section.']),
       `=================================================================`,
-      `Verified Railway Timetable & Telemetry Integration`,
+      `Exprest Journey Companion Dossier`,
       `Exprest Core v2.4.1 · (C) Exprest Railways`,
     ].join('\n');
 
@@ -214,16 +214,17 @@ export default function CompanionPage() {
     });
   }, [stops, currentStopIdx, nextStopIdx, curTemp, nextTemp]);
 
-  const isSouthCentralCorridor = useMemo(() => {
-    return stops.some((s: any) => ['BZA', 'WL', 'KZJ', 'SC', 'BPQ'].includes(s.stationId?.toUpperCase()));
-  }, [stops]);
-
-  // Master Scenic Landmarks Dataset: real Overpass POIs + corridor-accurate heritage
+  // Master Scenic Landmarks Dataset: derived from real Overpass POIs along the transit corridor
   const landmarks: LandmarkItem[] = useMemo(() => {
     const items: LandmarkItem[] = [];
+    const seenIds = new Set<string>();
 
     if (Array.isArray(poisRes?.data) && poisRes.data.length > 0) {
       for (const p of poisRes.data) {
+        const id = p.id || `poi_${p.latitude}_${p.longitude}`;
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+
         const cat = p.category as string;
         const catKey: LandmarkItem['categoryKey'] =
           cat === 'BRIDGES_TUNNELS' ? 'BRIDGES_TUNNELS' :
@@ -240,8 +241,12 @@ export default function CompanionPage() {
           catKey === 'MOUNTAINS_GHATS' ? 'terrain' :
           catKey === 'MONUMENTS' ? 'temple_hindu' : 'water';
 
+        const latStr = p.latitude != null ? `${Number(p.latitude).toFixed(4)}° N` : '—';
+        const lonStr = p.longitude != null ? `${Number(p.longitude).toFixed(4)}° E` : '—';
+        const coordStr = `${latStr}, ${lonStr}`;
+
         items.push({
-          id: p.id || `poi_${p.latitude}_${p.longitude}`,
+          id,
           categoryKey: catKey,
           categoryLabel: catLabel,
           icon,
@@ -249,15 +254,15 @@ export default function CompanionPage() {
           badge: `${Math.round((p.distanceFromRouteM || 0) / 100) / 10} km from track · OpenStreetMap`,
           description: p.tags?.description || p.tags?.historic || p.tags?.wikipedia || 'Geographic landmark located along the active rail transit corridor.',
           sightlineType: 'Window View',
-          sightlineText: `Coordinates: ${p.latitude?.toFixed(4)}° N, ${p.longitude?.toFixed(4)}° E`,
+          sightlineText: `Coordinates: ${coordStr}`,
           statusBadge: 'Verified Geographic Point',
           statusIcon: 'pin_drop',
-          geoLabel: `${p.latitude?.toFixed(4)}° N, ${p.longitude?.toFixed(4)}° E`,
+          geoLabel: coordStr,
           geoIcon: 'pin_drop',
           actionLabel: 'View Coordinate Specs',
           actionType: 'specs',
           telemetryData: {
-            coordinates: `${p.latitude?.toFixed(4)}° N, ${p.longitude?.toFixed(4)}° E`,
+            coordinates: coordStr,
             structureType: p.tags?.bridge ? 'Rail Bridge / Viaduct' : p.tags?.historic ? 'Historical Monument' : 'Natural Formation',
             safetyStatus: 'Verified spatial alignment from OpenStreetMap Overpass query',
           },
@@ -265,105 +270,8 @@ export default function CompanionPage() {
       }
     }
 
-    if (isSouthCentralCorridor) {
-      items.push(
-        {
-          id: 'krishna-river-bridge',
-          categoryKey: 'RIVERS_LAKES',
-          categoryLabel: 'Rivers & Lakes',
-          icon: 'water',
-          title: 'Krishna River Rail Bridge',
-          badge: 'Architectural Marvel · Constructed 1974',
-          description: 'Crossing at km 410 · 2.8 km span length · Second longest rail bridge in South Central zone. Spans the sacred Krishna River with the historic Prakasam Barrage water gates visible upstream.',
-          sightlineType: 'Window View',
-          sightlineText: 'Left & Right (Panoramic river vistas with Prakasam Barrage upstream)',
-          statusBadge: 'South Central Mainline Corridor',
-          statusIcon: 'schedule',
-          geoLabel: '16.5193° N, 80.6305° E',
-          geoIcon: 'pin_drop',
-          actionLabel: 'View River Bridge Specs',
-          actionType: 'specs',
-          telemetryData: {
-            coordinates: '16.5193° N, 80.6305° E',
-            structureType: 'Multi-span Prestressed Concrete Box Girder (56 spans)',
-            safetyStatus: 'Structural health: Nominal · South Central Zone Rail Bridge',
-          },
-        },
-        {
-          id: 'eastern-ghats-granite',
-          categoryKey: 'MOUNTAINS_GHATS',
-          categoryLabel: 'Mountains & Ghats',
-          icon: 'terrain',
-          title: 'Eastern Ghats Foothills & Granite Outcrops',
-          badge: 'Scenic Geological Corridor',
-          description: 'Elevation shift: 23m → 275m plateau grade · 1:200 ascending railway gradient. Witness rugged Deccan basalt monoliths and ancient granite clusters rising naturally beside the high-speed rail corridor.',
-          sightlineType: 'Window View',
-          sightlineText: 'Right side (Ancient prehistoric monolith formations & Kakatiya boulder clusters)',
-          statusBadge: 'Deccan Plateau Ascent',
-          statusIcon: 'terrain',
-          geoLabel: 'Grade: +0.48% gradual climb',
-          geoIcon: 'straighten',
-          actionLabel: 'Topographic Profile',
-          actionType: 'profile',
-          telemetryData: {
-            coordinates: '17.4120° N, 79.1850° E',
-            gradient: '+0.48% (1:200 compensation incline)',
-            structureType: 'Heavy density deep ballast cushion with side retaining cribs',
-            safetyStatus: 'Track stability index: Nominal · Permissible track speed',
-          },
-        },
-        {
-          id: 'kazipet-escarpment',
-          categoryKey: 'BRIDGES_TUNNELS',
-          categoryLabel: 'Tunnels & Viaducts',
-          icon: 'account_tree',
-          title: 'Kazipet Escarpment Viaducts & Rock Cuts',
-          badge: 'Grade 1 Heavy Haul Engineering',
-          description: '3 Curved Viaducts · 1.4 km deep basalt cutting with double-tracked high speed bypass. Remarkable railway engineering permitting trains to negotiate the escarpment without speed restriction.',
-          sightlineType: 'Window View',
-          sightlineText: 'Acoustic sensation · High traction zone',
-          statusBadge: 'Kazipet - Balharshah Section',
-          statusIcon: 'schedule',
-          geoLabel: 'Cant Deficiency: 75mm (Optimal balance)',
-          geoIcon: 'architecture',
-          actionLabel: 'Civil Structure Specs',
-          actionType: 'specs',
-          telemetryData: {
-            coordinates: '17.9784° N, 79.5167° E',
-            cantDeficiency: '75mm (Transition curve cant: 140mm)',
-            designSpeed: '130 km/h engineered high speed bypass',
-            structureType: '3 Curved reinforced concrete viaducts & basalt rock bypass',
-            safetyStatus: 'Civil engineering structure inspected regularly by zonal safety officers',
-          },
-        },
-        {
-          id: 'kakatiya-warangal-fort',
-          categoryKey: 'MONUMENTS',
-          categoryLabel: 'Nearby Cities, Heritage & Monuments',
-          icon: 'temple_hindu',
-          title: 'Kakatiya Thousand Pillar Temple & Warangal Fort',
-          badge: 'UNESCO Heritage Zone',
-          description: 'Historic landmark located 4.2 km East of Warangal Junction track alignment. 12th-century UNESCO tentative list site featuring carved monolithic rock architecture visible from trackside as the train slows for outer signal reception.',
-          sightlineType: 'Passenger Tip',
-          sightlineText: 'Look east towards Warangal outer section for distant sight of historic ramparts',
-          statusBadge: 'Warangal Heritage Area',
-          statusIcon: 'place',
-          geoLabel: 'Built 1163 CE · Rudra Deva Era',
-          geoIcon: 'history_edu',
-          actionLabel: 'Heritage Narrative Dossier',
-          actionType: 'specs',
-          telemetryData: {
-            coordinates: '17.9689° N, 79.5941° E',
-            historicalEra: '1163 CE · Kakatiya Dynasty (Rudra Deva)',
-            narrator: 'National Heritage Rail Archives (ASI Documentation)',
-            transcript: 'As the train reduces speed on its approach to Warangal outer yard, glance towards the eastern horizon. The Thousand Pillar Temple, constructed in the distinctive star-shaped Trikuta architectural style, stands alongside the ancient mud and stone concentric fortification walls commissioned by King Ganapati Deva in the 12th century. The intricate carved basalt pillars and iconic Kakatiya Thorana gate are celebrated symbols of Deccan architectural heritage.',
-          },
-        }
-      );
-    }
-
     return items;
-  }, [poisRes?.data, isSouthCentralCorridor]);
+  }, [poisRes?.data]);
 
   // Filter landmarks by category
   const filteredLandmarks = useMemo(() => {
@@ -645,11 +553,11 @@ export default function CompanionPage() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
               <div>
                 <div className="flex items-center gap-2.5">
-                  <span className="material-symbols-outlined text-[20px] text-primary">radar</span>
+                  <span className="material-symbols-outlined text-[20px] text-primary">cloud</span>
                   <h2 className="text-heading-md font-heading-md text-primary">Route Rain &amp; Weather Horizon</h2>
                 </div>
                 <p className="text-body-sm font-body-sm text-secondary mt-1">
-                  Real-time Doppler precipitation radar mapped across corridor waypoints from {journey?.train?.originStationName || originStop?.stationName || 'Origin'} to {journey?.train?.destinationStationName || destStop?.stationName || 'Destination'} ({totalKm.toLocaleString()} km)
+                  Route Weather &amp; Precipitation Forecast mapped across corridor waypoints from {journey?.train?.originStationName || originStop?.stationName || 'Origin'} to {journey?.train?.destinationStationName || destStop?.stationName || 'Destination'} ({totalKm.toLocaleString()} km)
                 </p>
               </div>
               
@@ -744,21 +652,21 @@ export default function CompanionPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border text-on-surface">
                   <span className="material-symbols-outlined text-info text-[18px]">water_drop</span>
-                  <span>Current precipitation intensity: <strong className="text-primary font-semibold">0.8 mm/hr</strong></span>
+                  <span>Current Weather: <strong className="text-primary font-semibold">{curCond} ({curTemp !== '—' ? `${curTemp}°C` : 'N/A'})</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border text-on-surface">
-                  <span className="material-symbols-outlined text-secondary text-[18px]">speed</span>
-                  <span>Cabin Pressure: <strong className="text-primary font-semibold">1012 hPa (Nominal)</strong></span>
+                  <span className="material-symbols-outlined text-secondary text-[18px]">air</span>
+                  <span>Wind Speed: <strong className="text-primary font-semibold">{curWind}</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border text-on-surface">
-                  <span className="material-symbols-outlined text-secondary text-[18px]">cloud_download</span>
-                  <span>Wiper Status: <strong className="text-primary font-semibold">Intermittent Low</strong></span>
+                  <span className="material-symbols-outlined text-secondary text-[18px]">humidity_percentage</span>
+                  <span>Humidity: <strong className="text-primary font-semibold">{curHum !== '—' ? `${curHum}%` : 'N/A'}</strong></span>
                 </div>
               </div>
 
               <div className="flex items-center gap-1.5 text-label font-label text-text-tertiary">
-                <span className="material-symbols-outlined text-[15px]">radar</span>
-                <span>Doppler Echo Band Resolution: 250m cell</span>
+                <span className="material-symbols-outlined text-[15px]">cloud</span>
+                <span>Open-Meteo Weather Model Feed</span>
               </div>
             </div>
           </div>
@@ -781,7 +689,7 @@ export default function CompanionPage() {
             
             <div className="flex items-center gap-3">
               <span className="text-label font-label text-text-tertiary hidden md:inline">
-                Geo-referenced using On-Train GPS Track Log
+                OpenStreetMap Overpass POI Feed
               </span>
             </div>
           </div>
@@ -789,7 +697,7 @@ export default function CompanionPage() {
           {/* Category Filter Pills */}
           <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4 text-label font-label">
             {[
-              { key: 'ALL', label: 'All Sights (4)' },
+              { key: 'ALL', label: `All Sights (${landmarks.length})` },
               { key: 'RIVERS_LAKES', label: 'Rivers & Lakes' },
               { key: 'MOUNTAINS_GHATS', label: 'Mountains & Ghats' },
               { key: 'BRIDGES_TUNNELS', label: 'Tunnels & Viaducts' },
@@ -885,9 +793,9 @@ export default function CompanionPage() {
             {filteredLandmarks.length === 0 && (
               <div className="p-12 text-center bg-surface-elevated rounded-xl border border-dashed border-border col-span-full my-4">
                 <span className="material-symbols-outlined text-[36px] text-text-tertiary mb-2">landscape</span>
-                <h3 className="text-heading-md font-semibold text-primary">No Cataloged Landmarks for this Corridor</h3>
+                <h3 className="text-heading-md font-semibold text-primary">No scenic landmarks cataloged along this route section.</h3>
                 <p className="text-body-sm text-secondary max-w-md mx-auto mt-1">
-                  Scenic landmarks and topographic points are cataloged as trains traverse documented heritage and geological sectors.
+                  Geographic points of interest from OpenStreetMap will appear as route mapping data becomes available.
                 </p>
               </div>
             )}
@@ -986,31 +894,35 @@ export default function CompanionPage() {
               </div>
             )}
 
-            {/* Modal Body: Civil Structure Specs */}
+            {/* Modal Body: Geographic & Structure Specs */}
             {activeModal.actionType === 'specs' && (
               <div className="space-y-4">
                 <div className="p-3.5 bg-surface rounded-lg border border-border text-body-sm">
-                  <div className="text-label text-secondary mb-1">Civil Engineering Specifications</div>
+                  <div className="text-label text-secondary mb-1">Geographic Alignment Specifications</div>
                   <div className="grid grid-cols-2 gap-3 mt-2">
                     <div>
-                      <div className="text-text-tertiary text-label">Design Sectional Speed:</div>
-                      <div className="text-heading-md font-semibold text-primary">{activeModal.telemetryData.designSpeed}</div>
+                      <div className="text-text-tertiary text-label">Category:</div>
+                      <div className="text-heading-md font-semibold text-primary">{activeModal.categoryLabel}</div>
                     </div>
                     <div>
-                      <div className="text-text-tertiary text-label">Cant Deficiency:</div>
-                      <div className="text-heading-md font-semibold text-info">{activeModal.telemetryData.cantDeficiency}</div>
+                      <div className="text-text-tertiary text-label">Source:</div>
+                      <div className="text-heading-md font-semibold text-info">OpenStreetMap</div>
                     </div>
                   </div>
                 </div>
 
                 <div className="text-body-sm space-y-2 text-on-surface-variant">
                   <div className="flex items-center justify-between py-1.5 border-b border-border/60">
-                    <span className="text-secondary">Viaduct Engineering</span>
-                    <span className="font-medium text-primary text-right">{activeModal.telemetryData.structureType}</span>
+                    <span className="text-secondary">Structure / Landmark Type</span>
+                    <span className="font-medium text-primary text-right">{activeModal.telemetryData.structureType || 'Geographic Landmark'}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 border-b border-border/60">
+                    <span className="text-secondary">Trackside Coordinates</span>
+                    <span className="font-mono text-primary">{activeModal.telemetryData.coordinates}</span>
                   </div>
                   <div className="flex items-center justify-between py-1.5">
-                    <span className="text-secondary">Structural Sensor Grid</span>
-                    <span className="font-medium text-success">{activeModal.telemetryData.safetyStatus}</span>
+                    <span className="text-secondary">Spatial Verification</span>
+                    <span className="font-medium text-success">{activeModal.telemetryData.safetyStatus || 'Verified via OpenStreetMap Overpass query'}</span>
                   </div>
                 </div>
               </div>
@@ -1065,12 +977,12 @@ export default function CompanionPage() {
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-success pulse-live"></span>
-              <span className="text-primary font-medium">All IR CTC Systems Operational</span>
+              <span className="text-primary font-medium">RailRadar Telemetry Integration</span>
             </div>
             <span className="text-border">|</span>
-            <span>NTES Sync: Sub-second (Delta 120ms)</span>
+            <span>Open-Meteo Weather Integration</span>
             <span className="text-border hidden sm:inline">|</span>
-            <span className="hidden sm:inline">Doppler Radar: IMD Hyderabad High-Gain Feed</span>
+            <span className="hidden sm:inline">OpenStreetMap POI Feed</span>
           </div>
           <div className="flex items-center gap-5 text-text-tertiary">
             <span>Exprest Core v4.19.2-rc</span>

@@ -3,6 +3,7 @@
 import React, { useState, Suspense, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Logo } from '@/components/common/Logo';
 import { createClient } from '@/lib/supabase/client';
 
 function LoginForm() {
@@ -172,18 +173,7 @@ function LoginForm() {
       {/* Top Header */}
       <header className="w-full border-b border-border bg-surface-container-lowest sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-6 h-13 py-2.5 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded-md bg-primary text-on-primary flex items-center justify-center">
-              <span
-                className="material-symbols-outlined text-[14px]"
-                style={{ fontVariationSettings: "'FILL' 1" }}
-              >
-                train
-              </span>
-            </div>
-            <span className="text-[15px] font-semibold tracking-tight text-on-surface">Exprest</span>
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-success"></span>
-          </div>
+          <Logo imageClassName="h-7 sm:h-8 w-auto object-contain" />
 
           <span className="text-[12px] text-text-tertiary font-mono">
             Secure Authentication
@@ -196,13 +186,8 @@ function LoginForm() {
         <div className="w-full max-w-[420px] bg-surface-container-lowest border border-border rounded-2xl p-7 shadow-sm">
           {/* Header Title */}
           <div className="text-center mb-6">
-            <div className="w-10 h-10 rounded-xl bg-primary text-on-primary flex items-center justify-center mx-auto mb-3 shadow-xs">
-              <span
-                className="material-symbols-outlined text-[20px]"
-                style={{ fontVariationSettings: "'FILL' 1" }}
-              >
-                train
-              </span>
+            <div className="flex justify-center mb-4">
+              <Logo imageClassName="h-10 sm:h-11 w-auto object-contain" href="" />
             </div>
             <h1 className="text-[20px] font-semibold text-on-surface tracking-tight">
               {isSignUp ? 'Create your Exprest account' : 'Sign in to Exprest'}

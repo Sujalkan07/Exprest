@@ -17,6 +17,22 @@ import {
   validateInput,
 } from '../common/validation/schemas.js';
 
+function getShareSigningSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    if (!secret || secret === 'dev_secret_change_in_prod' || secret.length < 16) {
+      throw new AppError(
+        'SHARE_CREATE_FAILED',
+        'Secure share signing secret is not configured on the server.',
+        500,
+        false
+      );
+    }
+    return secret;
+  }
+  return secret || 'dev_secret_change_in_prod';
+}
+
 export async function registerRoutes(fastify: FastifyInstance) {
   const trainService = new TrainService();
   const journeyService = new JourneyService();
@@ -261,7 +277,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
         return;
       }
 
-      const secret = process.env.AUTH_SECRET || 'dev_secret_change_in_prod';
+      const secret = getShareSigningSecret();
       const hmac = crypto
         .createHmac('sha256', secret)
         .update(journeyId)
@@ -284,32 +300,33 @@ export async function registerRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // Share Resolution
+  // Share Resolution (Strictly requires valid cryptographic signed share token; direct journey IDs are rejected)
   fastify.get('/api/v1/shares/:shareToken', async (req, reply) => {
     try {
       const { shareToken } = validateInput(shareParamSchema, req.params);
       let journeyId: string | null = null;
 
+      // Strictly accept only signed share tokens starting with 'sh_'
       if (shareToken.startsWith('sh_')) {
         const parts = shareToken.slice(3).split('_');
         if (parts.length >= 2) {
           const sig = parts[parts.length - 1];
           const rawId = parts.slice(0, -1).join('_');
           const reconstructedJourneyId = `journey_${rawId}`;
-          const secret = process.env.AUTH_SECRET || 'dev_secret_change_in_prod';
+          const secret = getShareSigningSecret();
           const expectedHmac = crypto
             .createHmac('sha256', secret)
             .update(reconstructedJourneyId)
             .digest('hex')
             .slice(0, 16);
 
-          if (sig.length === expectedHmac.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedHmac))) {
+          const sigBuf = Buffer.from(sig, 'utf-8');
+          const expectedBuf = Buffer.from(expectedHmac, 'utf-8');
+
+          if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
             journeyId = reconstructedJourneyId;
           }
         }
-      } else if (shareToken.startsWith('journey_')) {
-        // Supported fallback for direct journey IDs
-        journeyId = shareToken;
       }
 
       if (!journeyId) {

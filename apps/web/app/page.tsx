@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { Train } from '@exprest/types';
 import { DarkModeToggle } from '@/components/common/DarkModeToggle';
+import { Logo } from '@/components/common/Logo';
 
 import { API_BASE } from '@/lib/api';
 
@@ -395,21 +396,7 @@ export default function HomePage() {
         <div className="flex justify-between items-center w-full px-6 max-w-6xl mx-auto h-13 py-2.5">
           {/* Brand + Nav */}
           <div className="flex items-center gap-8">
-            <Link
-              className="text-[15px] font-semibold tracking-tight text-on-surface flex items-center gap-2 hover:opacity-90 transition-opacity"
-              href="/"
-            >
-              <div className="w-5 h-5 rounded-md bg-primary text-on-primary flex items-center justify-center">
-                <span
-                  className="material-symbols-outlined text-[14px]"
-                  style={{ fontVariationSettings: "'FILL' 1" }}
-                >
-                  train
-                </span>
-              </div>
-              <span className="tracking-[-0.01em]">Exprest</span>
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-success"></span>
-            </Link>
+            <Logo imageClassName="h-7 sm:h-8 w-auto object-contain" />
 
             <nav className="hidden md:flex items-center gap-6">
               <Link

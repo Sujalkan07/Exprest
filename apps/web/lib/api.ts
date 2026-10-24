@@ -21,7 +21,11 @@ export function getApiBase(): string {
     return isLocal ? 'http://localhost:4000' : '';
   }
 
-  return (process.env.API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+  return (
+    process.env.API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    (process.env.NODE_ENV === 'production' ? 'https://exprest.onrender.com' : 'http://localhost:4000')
+  ).replace(/\/+$/, '');
 }
 
 export const API_BASE = getApiBase();
@@ -40,12 +44,26 @@ export async function apiFetch<T = any>(
     : `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const onCallerAbort = () => {
+    controller.abort((fetchOptions.signal as any)?.reason);
+  };
+
+  if (fetchOptions.signal) {
+    if (fetchOptions.signal.aborted) {
+      controller.abort((fetchOptions.signal as any)?.reason);
+    } else {
+      fetchOptions.signal.addEventListener('abort', onCallerAbort);
+    }
+  }
+
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`API request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
 
   try {
     const res = await fetch(url, {
       ...fetchOptions,
-      signal: fetchOptions.signal || controller.signal,
+      signal: controller.signal,
       headers: {
         'Accept': 'application/json',
         ...fetchOptions.headers,
@@ -68,11 +86,17 @@ export async function apiFetch<T = any>(
 
     return await res.json();
   } catch (err: any) {
-    if (err.name === 'AbortError') {
+    if (err.name === 'AbortError' || controller.signal.aborted) {
+      if (fetchOptions.signal?.aborted) {
+        throw err;
+      }
       throw new Error(`API request timed out after ${timeoutMs}ms`);
     }
     throw err;
   } finally {
     clearTimeout(timeoutId);
+    if (fetchOptions.signal) {
+      fetchOptions.signal.removeEventListener('abort', onCallerAbort);
+    }
   }
 }

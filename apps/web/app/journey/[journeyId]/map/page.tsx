@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { JourneyMap, JourneyMapRef } from '@/components/map/JourneyMap';
 import Link from 'next/link';
+import { Logo } from '@/components/common/Logo';
 
 import { API_BASE } from '@/lib/api';
 
@@ -105,8 +106,9 @@ export default function ImmersiveMapPage() {
       <header className="bg-surface-elevated text-primary border-b border-border shadow-sm flex justify-between items-center w-full px-space-lg h-14 z-50 relative select-none flex-shrink-0">
         <div className="flex items-center space-x-space-md">
           <div className="flex items-center space-x-2">
-            <span className="material-symbols-outlined text-primary text-[22px]">train</span>
-            <span className="font-heading-lg text-heading-lg tracking-tight font-bold text-primary">Exprest</span>
+            <Logo imageClassName="h-7 sm:h-8 w-auto object-contain" />
+
+
           </div>
           <div className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1 bg-surface rounded-full border border-border">
             <span className="w-2 h-2 rounded-full bg-success animate-pulse"></span>

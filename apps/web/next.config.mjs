@@ -46,7 +46,11 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   async rewrites() {
-    const apiBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+    const apiBase = (
+      process.env.API_URL ||
+      process.env.NEXT_PUBLIC_API_URL ||
+      (process.env.NODE_ENV === 'production' ? 'https://exprest.onrender.com' : 'http://localhost:4000')
+    ).replace(/\/+$/, '');
     return [
       {
         source: '/api/:path*',

@@ -69,13 +69,21 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
 
 async function main() {
   // Startup environment validation (Section 4)
-  if (!process.env.RAILRADAR_API_KEY) {
-    if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.RAILRADAR_API_KEY) {
       throw new Error(
         'Configuration error: Missing required environment variable RAILRADAR_API_KEY. ' +
         'Please configure RAILRADAR_API_KEY in your deployment environment.'
       );
-    } else {
+    }
+    if (!process.env.AUTH_SECRET || process.env.AUTH_SECRET === 'dev_secret_change_in_prod' || process.env.AUTH_SECRET.length < 16) {
+      throw new Error(
+        'Configuration error: Missing or insecure AUTH_SECRET in production. ' +
+        'Please configure a secure AUTH_SECRET (at least 16 characters) in your deployment environment.'
+      );
+    }
+  } else {
+    if (!process.env.RAILRADAR_API_KEY) {
       console.warn(
         '[Config Warning] RAILRADAR_API_KEY is not set. Live train tracking calls to RailRadar will fail ' +
         'until RAILRADAR_API_KEY is set in your .env file.'

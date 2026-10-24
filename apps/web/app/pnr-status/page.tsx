@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { DarkModeToggle } from '@/components/common/DarkModeToggle';
+import { Logo } from '@/components/common/Logo';
 import { createClient } from '@/lib/supabase/client';
 import { PnrStatusResult, PassengerStatus, CoachRakeItem } from '@exprest/types';
 
@@ -516,7 +517,8 @@ export default function PnrStatusPage() {
 
   // User's allocated coach (if any) and interactive coach selection
   const userCoach = pnrData?.userCoach || pnrData?.passengers?.find((p) => p.coach)?.coach || null;
-  const rawRake = (pnrData?.rakeComposition && pnrData.rakeComposition.length > 0)
+  const hasActualRake = Boolean(pnrData?.rakeComposition && pnrData.rakeComposition.length > 0);
+  const rawRake: CoachRakeItem[] = (pnrData?.rakeComposition && pnrData.rakeComposition.length > 0)
     ? pnrData.rakeComposition
     : DEFAULT_RAKE;
 
@@ -703,18 +705,7 @@ export default function PnrStatusPage() {
       <header className="fixed top-0 left-0 w-full z-50 bg-surface-elevated/95 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] border-b border-border">
         <div className="h-16 w-full max-w-[1440px] mx-auto px-margin flex items-center justify-between gap-space-lg">
           <div className="flex items-center gap-space-xl">
-            <Link className="flex items-center gap-space-sm text-on-surface select-none group" href="/">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-on-primary font-heading-md text-heading-md font-bold tracking-tight">
-                E
-              </div>
-              <div className="flex items-center gap-space-xs">
-                <span className="font-heading-md text-heading-md tracking-tight text-on-surface font-semibold">Exprest</span>
-                <span className="relative flex h-2 w-2 ml-1">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
-                </span>
-              </div>
-            </Link>
+            <Logo imageClassName="h-8 sm:h-9 w-auto object-contain" />
 
             <nav className="hidden md:flex items-center gap-space-xs">
               <Link
@@ -1296,7 +1287,9 @@ export default function PnrStatusPage() {
                             </h2>
                           </div>
                           <p className="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
-                            Top-down engineering schematic of {coachClassName} Coach {activeCoach} ({layoutMeta.totalBerths} Berths, LHB Rake Series)
+                            {hasActualRake
+                              ? `Top-down engineering schematic of ${coachClassName} Coach ${activeCoach} (${layoutMeta.totalBerths} Berths, LHB Rake Series)`
+                              : `Illustrative schematic of ${coachClassName} Coach ${activeCoach} (${layoutMeta.totalBerths} Berths) · Official rake composition not yet published`}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 self-start sm:self-auto">
@@ -1320,7 +1313,9 @@ export default function PnrStatusPage() {
                           <div>
                             <span className="font-medium text-on-surface">Platform Boarding Assist:</span>
                             <span className="text-on-surface-variant ml-1">
-                              {pnrData.sourceStationName || pnrData.sourceStationCode}{pnrData.departurePlatform ? ` Platform ${pnrData.departurePlatform}` : ''}: Coach {activeCoach} is at position {coachPositionNumber ? `${coachPositionNumber} of ${displayRake.length}` : 'in rake sequence'}.
+                              {hasActualRake
+                                ? `${pnrData.sourceStationName || pnrData.sourceStationCode}${pnrData.departurePlatform ? ` Platform ${pnrData.departurePlatform}` : ''}: Coach ${activeCoach} is at position ${coachPositionNumber ? `${coachPositionNumber} of ${displayRake.length}` : 'in rake sequence'}.`
+                                : `${pnrData.sourceStationName || pnrData.sourceStationCode}${pnrData.departurePlatform ? ` Platform ${pnrData.departurePlatform}` : ''}: Coach position in train rake will be updated once chart is finalized.`}
                             </span>
                           </div>
                         </div>
@@ -1338,7 +1333,11 @@ export default function PnrStatusPage() {
                     {/* Interactive Train Rake Coach Selector Bar */}
                     <div className="flex flex-col gap-1.5">
                       <div className="flex items-center justify-between text-label text-text-tertiary">
-                        <span className="uppercase tracking-wider">Train Rake Coaches (Select to switch view):</span>
+                        <span className="uppercase tracking-wider">
+                          {hasActualRake
+                            ? 'Train Rake Coaches (Select to switch view):'
+                            : 'Illustrative Coach Sequence (Official rake composition not yet published for this run):'}
+                        </span>
                         <span className="flex items-center gap-1">
                           <span className="material-symbols-outlined text-[14px]">arrow_back</span> Engine End (Platform Front)
                         </span>
@@ -1980,7 +1979,7 @@ export default function PnrStatusPage() {
           <div className="flex items-center gap-space-md">
             <div className="flex items-center gap-space-xs">
               <span className="w-2 h-2 rounded-full bg-success"></span>
-              <span className="font-body-sm text-body-sm text-on-surface font-medium">All IR CTC Sectors Operational</span>
+              <span className="font-body-sm text-body-sm text-on-surface font-medium">PRS Reservation Inquiry</span>
             </div>
             <span className="text-outline-variant hidden sm:inline">•</span>
             <span className="font-label text-label text-on-surface-variant uppercase">PRS ENQUIRY FEED INTEGRATION</span>
