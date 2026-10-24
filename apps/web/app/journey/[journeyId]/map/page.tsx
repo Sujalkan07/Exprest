@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { JourneyMap, JourneyMapRef } from '@/components/map/JourneyMap';
 import Link from 'next/link';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { API_BASE } from '@/lib/api';
 
 function formatTime(isoString: string | null | undefined, extraDelayMinutes: number = 0): string {
   if (!isoString) return '—';
@@ -134,7 +134,7 @@ export default function ImmersiveMapPage() {
         <div className="flex items-center space-x-2 md:space-x-3">
           <div className="hidden xl:flex items-center space-x-1.5 px-2 py-1 bg-surface rounded border border-border">
             <span className="material-symbols-outlined text-success text-[15px]">satellite_alt</span>
-            <span className="font-label text-label text-on-surface-variant font-medium">GPS · {isLive ? '100% lock' : 'Scheduled'}</span>
+            <span className="font-label text-label text-on-surface-variant font-medium">{isLive ? 'Live Telemetry' : 'Timetable View'}</span>
           </div>
           <Link href="/" className="hidden sm:inline-flex items-center space-x-1 px-3 py-1.5 border border-border rounded-lg font-body-sm text-body-sm font-medium hover:bg-surface transition-all duration-150 active:scale-95 text-on-surface">
             <span className="material-symbols-outlined text-[16px]">swap_horiz</span>
@@ -379,7 +379,7 @@ export default function ImmersiveMapPage() {
               <button className="p-2 hover:bg-surface rounded-lg transition-colors text-on-surface" title="Layers">
                 <span className="material-symbols-outlined text-[20px]">layers</span>
               </button>
-              <button onClick={() => mapRef.current?.fitRoute()} className="p-2 hover:bg-surface rounded-lg transition-colors text-on-surface" title="North Up">
+              <button onClick={() => mapRef.current?.resetNorth()} className="p-2 hover:bg-surface rounded-lg transition-colors text-on-surface" title="North Up">
                 <span className="material-symbols-outlined text-[20px]">explore</span>
               </button>
             </div>

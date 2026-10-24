@@ -15,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-      {/* Dark mode initializer — runs before first paint to avoid flash */}
+        {/* Theme and reduced-motion initializer — runs before first paint to avoid flash */}
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {
             try {
@@ -23,6 +23,11 @@ export default function RootLayout({
               var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
               if (stored === 'true' || (stored === null && prefersDark)) {
                 document.documentElement.classList.add('dark');
+              }
+              var storedMotion = localStorage.getItem('exprest_reduced_motion');
+              var prefersMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+              if (storedMotion === 'true' || (storedMotion === null && prefersMotion)) {
+                document.documentElement.setAttribute('data-reduced-motion', 'true');
               }
             } catch(e) {}
           })();

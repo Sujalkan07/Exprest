@@ -19,6 +19,7 @@ interface StopInfo {
 export interface JourneyMapRef {
   recenter: () => void;
   fitRoute: () => void;
+  resetNorth: () => void;
 }
 
 export interface JourneyMapProps {
@@ -319,6 +320,11 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
         if (!bounds.isEmpty()) {
           map.current.fitBounds(bounds, { padding: { top: 100, bottom: 100, left: 400, right: 100 }, maxZoom: 10, duration: 1000 });
         }
+      }
+    },
+    resetNorth: () => {
+      if (map.current) {
+        map.current.resetNorthPitch({ duration: 500 });
       }
     }
   }));

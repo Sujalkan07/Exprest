@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { API_BASE } from '@/lib/api';
 
 function formatTime(isoString: string | null | undefined, extraDelayMinutes: number = 0): string {
   if (!isoString) return '—';
@@ -182,8 +182,8 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="flex items-center flex-wrap gap-2.5">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-warning/20 bg-warning/5 text-warning text-label font-label">
-                <span className="w-1.5 h-1.5 rounded-full bg-warning"></span>
+              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-label font-label ${delayMinutes > 15 ? 'border-danger/20 bg-danger/5 text-danger' : delayMinutes > 0 ? 'border-warning/20 bg-warning/5 text-warning' : 'border-success/20 bg-success/5 text-success'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${delayMinutes > 15 ? 'bg-danger' : delayMinutes > 0 ? 'bg-warning' : 'bg-success'}`}></span>
                 <span>{delayMinutes > 0 ? `+${delayMinutes} min Delay` : `On Time`}</span>
               </div>
 
@@ -211,15 +211,29 @@ export default function AnalyticsPage() {
                 <span className="material-symbols-outlined text-outline">timelapse</span>
               </div>
               <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-display-lg font-display-lg text-primary tracking-tight tnum">{progress?.percent || 0}%</span>
-                <span className="text-label font-label text-success flex items-center">
-                  <span className="material-symbols-outlined text-[13px]">arrow_upward</span> On track
-                </span>
+                <span className="text-display-lg font-display-lg text-primary tracking-tight tnum">{progress?.percent ?? 0}%</span>
+                {delayMinutes > 15 ? (
+                  <span className="text-label font-label text-danger flex items-center gap-0.5">
+                    <span className="material-symbols-outlined text-[13px]">warning</span> +{delayMinutes}m delay
+                  </span>
+                ) : delayMinutes > 0 ? (
+                  <span className="text-label font-label text-warning flex items-center gap-0.5">
+                    <span className="material-symbols-outlined text-[13px]">schedule</span> +{delayMinutes}m delay
+                  </span>
+                ) : journey?.status === 'completed' ? (
+                  <span className="text-label font-label text-secondary flex items-center gap-0.5">
+                    <span className="material-symbols-outlined text-[13px]">check_circle</span> Completed
+                  </span>
+                ) : (
+                  <span className="text-label font-label text-success flex items-center gap-0.5">
+                    <span className="material-symbols-outlined text-[13px]">arrow_upward</span> On track
+                  </span>
+                )}
               </div>
             </div>
             <div className="mt-4 pt-2">
               <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
-                <div className="bg-primary h-1.5 rounded-full" style={{ width: `${progress?.percent || 0}%` }}></div>
+                <div className="bg-primary h-1.5 rounded-full" style={{ width: `${Math.min(100, Math.max(0, progress?.percent ?? 0))}%` }}></div>
               </div>
               <p className="text-label font-label text-secondary mt-2 tnum">
                 {Math.round(progress?.coveredDistanceKm || 0)} km of {Math.round(progress?.totalDistanceKm || 0)} km total · {Math.round(progress?.remainingDistanceKm || 0)} km remaining
@@ -329,7 +343,7 @@ export default function AnalyticsPage() {
           <div className="relative w-full mt-6 select-none">
             {/* Live Train Indicator on Elevation SVG */}
             {hasElevationData && (
-              <div className="absolute left-[${Math.min(95, Math.max(5, progress?.percent || 0))}%] top-6 -translate-x-1/2 z-20 hidden md:flex flex-col items-center pointer-events-none">
+              <div style={{ left: `${Math.min(95, Math.max(5, progress?.percent ?? 0))}%` }} className="absolute top-6 -translate-x-1/2 z-20 hidden md:flex flex-col items-center pointer-events-none">
                 <div className="bg-primary text-on-primary px-3 py-1.5 rounded shadow-lg text-label font-label whitespace-nowrap flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-success pulse-live"></span>
                   <span>Current: {Math.round(progress?.coveredDistanceKm || 0)} km</span>
@@ -585,7 +599,7 @@ export default function AnalyticsPage() {
                         {formatTime(stop.actualArrival || stop.scheduledArrival, delay)} / {formatTime(stop.actualDeparture || stop.scheduledDeparture, delay)}
                       </td>
                       <td className="py-3.5 px-3">
-                        <span className="px-2 py-0.5 rounded bg-surface border border-border text-label font-label">PF {stop.platform || 1}</span>
+                        <span className="px-2 py-0.5 rounded bg-surface border border-border text-label font-label">PF {stop.platform || '—'}</span>
                       </td>
                       <td className="py-3.5 px-3">
                         <span className={`text-label font-label font-semibold ${delay > 0 ? 'text-warning' : 'text-success'}`}>

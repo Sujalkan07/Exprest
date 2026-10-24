@@ -7,7 +7,7 @@ import { DarkModeToggle } from '@/components/common/DarkModeToggle';
 import { createClient } from '@/lib/supabase/client';
 import { PnrStatusResult, PassengerStatus, CoachRakeItem } from '@exprest/types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { API_BASE } from '@/lib/api';
 
 interface RecentPnrItem {
   pnr: string;
@@ -24,126 +24,7 @@ function formatPNR(value: string): string {
   return raw.slice(0, 3) + '-' + raw.slice(3, 6) + '-' + raw.slice(6, 10);
 }
 
-const DEFAULT_RECENT_LOOKUPS: RecentPnrItem[] = [
-  {
-    pnr: '6248193042',
-    trainNumber: '12951',
-    trainName: 'Mumbai Tejas Rajdhani',
-    statusBadge: 'CNF (B4-32)',
-    statusType: 'cnf',
-  },
-  {
-    pnr: '4820194821',
-    trainNumber: '22436',
-    trainName: 'Vande Bharat Exp',
-    statusBadge: 'WL 4 (92% Prob)',
-    statusType: 'wl',
-  },
-  {
-    pnr: '8103947219',
-    trainNumber: '12301',
-    trainName: 'Howrah Rajdhani',
-    statusBadge: 'RAC 12',
-    statusType: 'rac',
-  },
-];
-
-const STITCH_DEMO_DATA: PnrStatusResult = {
-  pnr: '6248193042',
-  trainNumber: '12951',
-  trainName: 'MUMBAI TEJAS RAJDHANI',
-  travelClass: '3A',
-  travelClassName: 'Superfast AC Special',
-  quota: 'GN',
-  distanceKm: '1,386 km',
-  sourceStationCode: 'NDLS',
-  sourceStationName: 'New Delhi',
-  destinationStationCode: 'MMCT',
-  destinationStationName: 'Mumbai Central',
-  departureTime: '16:55',
-  arrivalTime: '08:32',
-  journeyDate: 'Fri, 24 Oct 2025',
-  departurePlatform: '3',
-  arrivalPlatform: '1',
-  duration: '15h 37m non-stop transit',
-  haltsCount: 5,
-  chartPrepared: true,
-  bookingStatus: 'Confirmed',
-  userCoach: 'B4',
-  fare: {
-    totalAmountPaid: 6135,
-  },
-  cancellationTerms: {
-    summary: 'Full cancellation with flat clerkage deductible (₹150/passenger) valid until chart preparation finalized.',
-    currentRefundValue: 5985,
-  },
-  intermediateHalts: [
-    { code: 'KOTA', time: '21:05' },
-    { code: 'RTM', time: '00:15' },
-    { code: 'BRC', time: '03:55' },
-    { code: 'ST', time: '05:25' },
-  ],
-  passengers: [
-    {
-      passengerNumber: 1,
-      bookingStatus: 'B4, 32',
-      currentStatus: 'CNF',
-      coach: 'B4',
-      berthNumber: 32,
-      berthType: 'Lower (LB)',
-      confirmed: true,
-      age: 34,
-      gender: 'Male (M)',
-    },
-    {
-      passengerNumber: 2,
-      bookingStatus: 'B4, 33',
-      currentStatus: 'CNF',
-      coach: 'B4',
-      berthNumber: 33,
-      berthType: 'Middle (MB)',
-      confirmed: true,
-      age: 31,
-      gender: 'Female (F)',
-    },
-    {
-      passengerNumber: 3,
-      bookingStatus: 'B4, 35',
-      currentStatus: 'CNF',
-      coach: 'B4',
-      berthNumber: 35,
-      berthType: 'Side Upper (SU)',
-      confirmed: true,
-      age: 6,
-      gender: 'Male (M)',
-    },
-  ],
-  liveTrainStatus: {
-    trainNumber: '12951',
-    delayMinutes: 0,
-    isOnTime: true,
-    statusText: 'ON TIME',
-    speedKmh: 0,
-    locationNotice: 'Rake shunting complete at New Delhi Yard. Scheduled to place at Platform 3 at 16:15 PM (40 mins before departure).',
-  },
-  rakeComposition: [
-    { position: 1, code: 'LOCO', classType: 'LOCO', className: 'WAP-7 Electric Locomotive' },
-    { position: 2, code: 'EOG', classType: 'EOG', className: 'Power Generator Car' },
-    { position: 3, code: 'H1', classType: '1A', className: 'AC First Class' },
-    { position: 4, code: 'A1', classType: '2A', className: 'AC 2 Tier' },
-    { position: 5, code: 'A2', classType: '2A', className: 'AC 2 Tier' },
-    { position: 6, code: 'B1', classType: '3A', className: 'AC 3 Tier' },
-    { position: 7, code: 'B2', classType: '3A', className: 'AC 3 Tier' },
-    { position: 8, code: 'B3', classType: '3A', className: 'AC 3 Tier' },
-    { position: 9, code: 'B4', classType: '3A', className: 'AC 3 Tier' },
-    { position: 10, code: 'PC', classType: 'PC', className: 'Pantry Car' },
-    { position: 11, code: 'B5', classType: '3A', className: 'AC 3 Tier' },
-    { position: 12, code: 'B6', classType: '3A', className: 'AC 3 Tier' },
-    { position: 13, code: 'B7', classType: '3A', className: 'AC 3 Tier' },
-    { position: 14, code: 'B8', classType: '3A', className: 'AC 3 Tier' },
-    { position: 15, code: 'EOG', classType: 'EOG', className: 'Power Generator Car' },
-  ],
-};
+const DEFAULT_RECENT_LOOKUPS: RecentPnrItem[] = [];
 
 const DEFAULT_RAKE: CoachRakeItem[] = [
   { position: 1, code: 'LOCO', classType: 'LOCO', className: 'Locomotive Engine' },
@@ -289,16 +170,17 @@ export default function PnrStatusPage() {
   const router = useRouter();
   const [supabase] = useState(() => createClient());
 
-  const [pnrInput, setPnrInput] = useState('624-819-3042');
+  const [pnrInput, setPnrInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [pnrData, setPnrData] = useState<PnrStatusResult | null>(STITCH_DEMO_DATA);
-  const [selectedCoach, setSelectedCoach] = useState<string | null>('B4');
-  const [selectedBay, setSelectedBay] = useState<number | null>(4);
+  const [pnrData, setPnrData] = useState<PnrStatusResult | null>(null);
+  const [selectedCoach, setSelectedCoach] = useState<string | null>(null);
+  const [selectedBay, setSelectedBay] = useState<number | null>(null);
   const [errorInfo, setErrorInfo] = useState<{
     code: string;
     message: string;
     isFlushed?: boolean;
     isNotFound?: boolean;
+    isPrsUnavailable?: boolean;
   } | null>(null);
 
   const [recentLookups, setRecentLookups] = useState<RecentPnrItem[]>(DEFAULT_RECENT_LOOKUPS);
@@ -398,26 +280,6 @@ export default function PnrStatusPage() {
     setIsLoading(true);
     setErrorInfo(null);
 
-    // If query is the Stitch sample PNR, test API first, fallback to mock if PRS unavailable
-    if (clean === '6248193042') {
-      try {
-        const res = await fetch(`${API_BASE}/api/v1/pnr/${clean}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json?.data) {
-            setPnrData(json.data);
-            setIsLoading(false);
-            return;
-          }
-        }
-      } catch {}
-      setPnrData(STITCH_DEMO_DATA);
-      setSelectedCoach('B4');
-      setSelectedBay(4);
-      setIsLoading(false);
-      return;
-    }
-
     try {
       const res = await fetch(`${API_BASE}/api/v1/pnr/${clean}`);
       const json = await res.json();
@@ -427,12 +289,24 @@ export default function PnrStatusPage() {
         const errMsg = json?.error?.message || 'Unable to retrieve PNR record.';
         const isFlushed = errCode === 'PNR_FLUSHED';
         const isNotFound = errCode === 'PNR_NOT_FOUND' || errCode === 'INVALID_PNR';
+        const isPrsUnavailable =
+          errCode === 'PNR_UNAVAILABLE' ||
+          errCode === 'PRS_UNAVAILABLE' ||
+          errCode === 'PROVIDER_TIMEOUT' ||
+          errMsg.includes('500') ||
+          errMsg.toLowerCase().includes('socket') ||
+          errMsg.toLowerCase().includes('prs');
+
+        const displayMsg = isPrsUnavailable
+          ? 'Indian Railways reservation servers (PRS) are currently unavailable or experiencing connection issues. Please retry in a few moments.'
+          : errMsg;
 
         setErrorInfo({
           code: errCode,
-          message: errMsg,
+          message: displayMsg,
           isFlushed,
           isNotFound,
+          isPrsUnavailable,
         });
         setPnrData(null);
         return;
@@ -631,20 +505,11 @@ export default function PnrStatusPage() {
     window.print();
   };
 
-  // Wallet shortcut
-  const handleWallet = () => {
-    showToast('Apple & Google Wallet pass sync is not currently supported for Indian Railways tickets.');
-  };
-
-  // File TDR
-  const handleFileTdr = () => {
-    window.open('https://www.irctc.co.in/nget/enquiry/refund-rules', '_blank', 'noopener,noreferrer');
-  };
-
   // Refresh current status
   const handleRefresh = () => {
-    if (pnrInput) {
-      performLookup(pnrInput);
+    const target = pnrData?.pnr || pnrInput;
+    if (target) {
+      performLookup(target);
       showToast('Refreshing latest PRS record...');
     }
   };
@@ -821,18 +686,8 @@ export default function PnrStatusPage() {
     'Standard Coach'
   );
 
-  // Pillar assist calculation
-  const pillarNumber = Math.max(2, (activeCoachIndex >= 0 ? activeCoachIndex : 4) * 2 + 6);
-  const escalatorNumber = activeCoachIndex > 8 ? 4 : 2;
-
-  // Cancellation and refund calculations
-  const estimatedFare = typeof pnrData?.fare?.totalAmountPaid === 'number'
-    ? pnrData.fare.totalAmountPaid
-    : ((pnrData?.passengers.length || 3) * 2145);
-  const clerkageDeductible = 150 * (pnrData?.passengers.length || 3);
-  const currentRefund = typeof pnrData?.cancellationTerms?.currentRefundValue === 'number'
-    ? pnrData.cancellationTerms.currentRefundValue
-    : Math.max(0, estimatedFare - clerkageDeductible);
+  // Coach position relative to locomotive
+  const coachPositionNumber = activeCoachIndex >= 0 ? activeCoachIndex + 1 : null;
 
   return (
     <div className="bg-background font-body-md text-on-surface antialiased min-h-screen flex flex-col justify-between selection:bg-surface-variant selection:text-primary">
@@ -1067,7 +922,7 @@ export default function PnrStatusPage() {
             {errorInfo && (
               <div
                 className={`p-space-lg rounded-xl border flex flex-col md:flex-row items-start md:items-center justify-between gap-space-md shadow-sm ${
-                  errorInfo.isFlushed
+                  errorInfo.isFlushed || errorInfo.isPrsUnavailable
                     ? 'bg-amber-500/10 border-amber-500/30 text-on-surface'
                     : 'bg-danger/10 border-danger/30 text-on-surface'
                 }`}
@@ -1075,10 +930,10 @@ export default function PnrStatusPage() {
                 <div className="flex items-start gap-3">
                   <span
                     className={`material-symbols-outlined text-[24px] mt-0.5 ${
-                      errorInfo.isFlushed ? 'text-warning' : 'text-danger'
+                      errorInfo.isFlushed || errorInfo.isPrsUnavailable ? 'text-warning' : 'text-danger'
                     }`}
                   >
-                    {errorInfo.isFlushed ? 'history_toggle_off' : 'error'}
+                    {errorInfo.isFlushed ? 'history_toggle_off' : errorInfo.isPrsUnavailable ? 'cloud_off' : 'error'}
                   </span>
                   <div>
                     <h3 className="font-heading-md text-heading-md font-semibold">
@@ -1086,6 +941,8 @@ export default function PnrStatusPage() {
                         ? 'PNR Record Flushed / Journey Completed'
                         : errorInfo.isNotFound
                         ? 'PNR Number Not Found or Invalid'
+                        : errorInfo.isPrsUnavailable
+                        ? 'Indian Railways PRS Servers Unavailable'
                         : 'Service Error Occurred'}
                     </h3>
                     <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">
@@ -1094,6 +951,11 @@ export default function PnrStatusPage() {
                     {errorInfo.isFlushed && (
                       <p className="font-label text-label text-text-tertiary mt-1">
                         Note: Indian Railways PRS flushes passenger reservation records within 24–48 hours of journey completion.
+                      </p>
+                    )}
+                    {errorInfo.isPrsUnavailable && (
+                      <p className="font-label text-label text-text-tertiary mt-1">
+                        Indian Railways passenger reservation servers (PRS) periodically close connections during maintenance or peak traffic windows. Your query can be retried shortly.
                       </p>
                     )}
                   </div>
@@ -1122,6 +984,36 @@ export default function PnrStatusPage() {
                 <div className="lg:col-span-4 flex flex-col gap-space-lg">
                   <div className="h-64 rounded-xl bg-surface-container"></div>
                   <div className="h-28 rounded-xl bg-surface-container"></div>
+                </div>
+              </div>
+            )}
+
+            {/* Initial Empty State */}
+            {!pnrData && !isLoading && !errorInfo && (
+              <div className="rounded-xl bg-surface-elevated border border-border p-8 sm:p-10 text-center max-w-2xl mx-auto shadow-sm my-4">
+                <div className="w-14 h-14 rounded-full bg-surface-container flex items-center justify-center mx-auto mb-4 text-primary">
+                  <span className="material-symbols-outlined text-[30px]">confirmation_number</span>
+                </div>
+                <h2 className="text-[20px] font-semibold text-on-surface mb-2">Check Real-Time PNR Status</h2>
+                <p className="text-[14px] text-text-secondary leading-relaxed mb-6 max-w-lg mx-auto">
+                  Enter your 10-digit Indian Railways PNR number above to verify current confirmation status, coach and berth allocations, architectural rake layout, and live schedule.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left pt-6 border-t border-border">
+                  <div className="p-3.5 rounded-lg bg-surface-container/60 border border-border/40">
+                    <span className="material-symbols-outlined text-[20px] text-primary mb-1">airline_seat_recline_extra</span>
+                    <div className="text-[13px] font-medium text-on-surface">Berth &amp; Coach Mapping</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">Top-down coach interior and exact berth placement</div>
+                  </div>
+                  <div className="p-3.5 rounded-lg bg-surface-container/60 border border-border/40">
+                    <span className="material-symbols-outlined text-[20px] text-success mb-1">verified</span>
+                    <div className="text-[13px] font-medium text-on-surface">Live PRS Sync</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">Real-time CNF, RAC, and Waitlist updates</div>
+                  </div>
+                  <div className="p-3.5 rounded-lg bg-surface-container/60 border border-border/40">
+                    <span className="material-symbols-outlined text-[20px] text-info mb-1">train</span>
+                    <div className="text-[13px] font-medium text-on-surface">Train Radar</div>
+                    <div className="text-[11px] text-text-tertiary mt-0.5">Direct integration with live train movement</div>
+                  </div>
                 </div>
               </div>
             )}
@@ -1221,14 +1113,6 @@ export default function PnrStatusPage() {
                             <span className="material-symbols-outlined text-[17px]">download</span>
                             <span>PDF Ticket</span>
                           </button>
-                          <button
-                            className="px-space-sm py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-body-sm text-body-sm flex items-center gap-1.5 transition-colors"
-                            onClick={handleWallet}
-                            type="button"
-                          >
-                            <span className="material-symbols-outlined text-[17px]">account_balance_wallet</span>
-                            <span>Wallet</span>
-                          </button>
                         </div>
                       </div>
 
@@ -1240,21 +1124,21 @@ export default function PnrStatusPage() {
                             Origin Departure
                           </span>
                           <span className="font-heading-lg text-heading-lg font-bold text-on-surface mt-0.5">
-                            {pnrData.departureTime || '16:55'}
+                            {pnrData.departureTime || '—'}
                           </span>
                           <span className="font-body-md text-body-md font-semibold text-on-surface">
-                            {pnrData.sourceStationName} ({pnrData.sourceStationCode})
+                            {pnrData.sourceStationName || pnrData.sourceStationCode} {pnrData.sourceStationCode ? `(${pnrData.sourceStationCode})` : ''}
                           </span>
                           <span className="font-body-sm text-body-sm text-on-surface-variant">
-                            {pnrData.journeyDate} · {pnrData.departurePlatform ? `Platform ${pnrData.departurePlatform}` : 'Platform 3'}
+                            {pnrData.journeyDate || 'Scheduled Day'}{pnrData.departurePlatform ? ` · Platform ${pnrData.departurePlatform}` : ''}
                           </span>
                         </div>
 
                         {/* Intermediate Path Graphic */}
                         <div className="flex-1 flex flex-col items-center justify-center px-space-md">
                           <div className="w-full flex items-center justify-between text-on-surface-variant font-label text-label uppercase tracking-wider mb-1.5">
-                            <span>{pnrData.duration || '15h 37m non-stop transit'}</span>
-                            <span>{pnrData.haltsCount ? `${pnrData.haltsCount} Halts` : '5 Halts'}</span>
+                            <span>{pnrData.duration || (pnrData.distanceKm ? `${pnrData.distanceKm} run` : 'Direct Run')}</span>
+                            <span>{pnrData.haltsCount != null ? `${pnrData.haltsCount} Halts` : 'Scheduled Halts'}</span>
                           </div>
                           <div className="relative w-full flex items-center">
                             <div className="w-3 h-3 rounded-full bg-primary flex-shrink-0"></div>
@@ -1265,22 +1149,15 @@ export default function PnrStatusPage() {
                             <div className="flex-1 h-0.5 bg-outline-variant"></div>
                             <div className="w-3 h-3 rounded-full bg-on-surface-variant flex-shrink-0"></div>
                           </div>
-                          <div className="w-full flex items-center justify-between font-label text-label text-text-tertiary mt-1.5 flex-wrap">
-                            {pnrData.intermediateHalts && pnrData.intermediateHalts.length > 0 ? (
-                              pnrData.intermediateHalts.map((h) => (
+                          {pnrData.intermediateHalts && pnrData.intermediateHalts.length > 0 && (
+                            <div className="w-full flex items-center justify-between font-label text-label text-text-tertiary mt-1.5 flex-wrap">
+                              {pnrData.intermediateHalts.map((h) => (
                                 <span key={h.code}>
                                   {h.code} {h.time ? `(${h.time})` : ''}
                                 </span>
-                              ))
-                            ) : (
-                              <>
-                                <span>KOTA (21:05)</span>
-                                <span>RTM (00:15)</span>
-                                <span>BRC (03:55)</span>
-                                <span>ST (05:25)</span>
-                              </>
-                            )}
-                          </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
                         {/* Destination Station */}
@@ -1289,13 +1166,13 @@ export default function PnrStatusPage() {
                             Destination Arrival
                           </span>
                           <span className="font-heading-lg text-heading-lg font-bold text-on-surface mt-0.5">
-                            {pnrData.arrivalTime || '08:32'}
+                            {pnrData.arrivalTime || '—'}
                           </span>
                           <span className="font-body-md text-body-md font-semibold text-on-surface">
-                            {pnrData.destinationStationName} ({pnrData.destinationStationCode})
+                            {pnrData.destinationStationName || pnrData.destinationStationCode} {pnrData.destinationStationCode ? `(${pnrData.destinationStationCode})` : ''}
                           </span>
                           <span className="font-body-sm text-body-sm text-on-surface-variant">
-                            Next Day · {pnrData.arrivalPlatform ? `Platform ${pnrData.arrivalPlatform}` : 'Platform 1'}
+                            {pnrData.arrivalPlatform ? `Platform ${pnrData.arrivalPlatform}` : 'Arrival Station'}
                           </span>
                         </div>
                       </div>
@@ -1443,7 +1320,7 @@ export default function PnrStatusPage() {
                           <div>
                             <span className="font-medium text-on-surface">Platform Boarding Assist:</span>
                             <span className="text-on-surface-variant ml-1">
-                              At {pnrData.sourceStationName} ({pnrData.sourceStationCode}) Platform {pnrData.departurePlatform || '3'}, Coach {activeCoach} halts right at <strong className="text-on-surface">Overhead Pillar {pillarNumber}</strong> near <strong className="text-on-surface">Escalator {escalatorNumber}</strong>.
+                              {pnrData.sourceStationName || pnrData.sourceStationCode}{pnrData.departurePlatform ? ` Platform ${pnrData.departurePlatform}` : ''}: Coach {activeCoach} is at position {coachPositionNumber ? `${coachPositionNumber} of ${displayRake.length}` : 'in rake sequence'}.
                             </span>
                           </div>
                         </div>
@@ -1958,9 +1835,9 @@ export default function PnrStatusPage() {
                       </span>
                       <p className="font-body-sm text-body-sm text-on-surface-variant">
                         {pnrData.liveTrainStatus?.locationNotice || (
-                          <>
-                            Rake placement verified at origin yard. Scheduled to place at <strong>Platform {pnrData.departurePlatform || '3'}</strong> (40 mins before departure).
-                          </>
+                          pnrData.departurePlatform
+                            ? `Scheduled to depart from Platform ${pnrData.departurePlatform}. Live tracking updates active on departure.`
+                            : 'Live tracking telemetry active on journey departure date.'
                         )}
                       </p>
                     </div>
@@ -1975,14 +1852,14 @@ export default function PnrStatusPage() {
                     >
                       <div className="absolute inset-0 bg-primary/20 backdrop-blur-[0.5px] p-space-md flex flex-col justify-between">
                         <span className="self-start px-2 py-1 rounded bg-surface-elevated/90 text-on-surface font-label text-label font-semibold shadow-sm">
-                          {pnrData.sourceStationCode} Yard · Sector 1
+                          {pnrData.sourceStationCode || 'Source'} Corridor
                         </span>
                         <div className="flex items-center justify-between">
                           <span className="px-2 py-1 rounded bg-primary text-on-primary font-label text-label font-medium">
-                            GPS Linked
+                            {pnrData.liveTrainStatus?.isOnTime || (pnrData.liveTrainStatus?.speedKmh ?? 0) > 0 ? 'Telemetry Active' : 'Timetable View'}
                           </span>
                           <span className="text-on-primary font-label text-label">
-                            Speed: {pnrData.liveTrainStatus?.speedKmh ?? 0} km/h
+                            {pnrData.liveTrainStatus?.speedKmh != null ? `Speed: ${pnrData.liveTrainStatus.speedKmh} km/h` : 'Speed: —'}
                           </span>
                         </div>
                       </div>
@@ -2008,12 +1885,19 @@ export default function PnrStatusPage() {
                       <h3 className="font-heading-md text-heading-md font-semibold">Cancellation Terms</h3>
                     </div>
                     <p className="font-body-sm text-body-sm text-on-surface-variant">
-                      Full cancellation with flat clerkage deductible (₹150/passenger) valid until chart preparation finalized.
+                      {pnrData.cancellationTerms?.summary || 'Standard IRCTC clerkage deductions apply based on time of cancellation prior to chart preparation.'}
                     </p>
-                    <div className="p-space-sm rounded bg-surface-container flex items-center justify-between font-label text-label">
-                      <span className="text-on-surface-variant">Current Refund Value:</span>
-                      <span className="font-bold text-on-surface">₹{currentRefund.toLocaleString('en-IN')}</span>
-                    </div>
+                    {typeof pnrData.cancellationTerms?.currentRefundValue === 'number' ? (
+                      <div className="p-space-sm rounded bg-surface-container flex items-center justify-between font-label text-label">
+                        <span className="text-on-surface-variant">Current Refund Value:</span>
+                        <span className="font-bold text-on-surface">₹{pnrData.cancellationTerms.currentRefundValue.toLocaleString('en-IN')}</span>
+                      </div>
+                    ) : (
+                      <div className="p-space-sm rounded bg-surface-container flex items-center justify-between font-label text-label">
+                        <span className="text-on-surface-variant">Clerkage Policy:</span>
+                        <span className="font-medium text-on-surface">As per IRCTC Gazette Rules</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* 12. Value Added Services Shortcuts */}
@@ -2028,7 +1912,7 @@ export default function PnrStatusPage() {
                       <span className="font-body-sm text-body-sm font-semibold text-on-surface">Order E-Catering</span>
                       <span className="font-label text-label text-on-surface-variant">
                         {userCoach
-                          ? `Deliver to Seat ${userCoach}-${pnrData.passengers[0]?.berthNumber || '32'}`
+                          ? `Deliver to Coach ${userCoach}${pnrData.passengers[0]?.berthNumber ? ` Seat ${pnrData.passengers[0].berthNumber}` : ''}`
                           : `Deliver to your train seat`}
                       </span>
                     </a>
@@ -2052,35 +1936,39 @@ export default function PnrStatusPage() {
             )}
 
             {/* 14. Bottom Status & Refresh Strip */}
-            <div className="p-space-md rounded-xl bg-surface-container flex flex-col sm:flex-row items-center justify-between gap-space-md border border-border/50">
-              <div className="flex items-center gap-space-sm">
-                <span className="w-2 h-2 rounded-full bg-success"></span>
-                <span className="font-body-sm text-body-sm text-on-surface font-medium">
-                  Official CRIS / NTES Passenger Reservation System Telemetry
-                </span>
-                <span className="text-outline-variant hidden md:inline">•</span>
-                <span className="font-label text-label text-text-tertiary hidden md:inline">
-                  Sync latency 24ms · Auto-refresh active every 60s
-                </span>
+            {pnrData && !isLoading && (
+              <div className="p-space-md rounded-xl bg-surface-container flex flex-col sm:flex-row items-center justify-between gap-space-md border border-border/50">
+                <div className="flex items-center gap-space-sm">
+                  <span className="w-2 h-2 rounded-full bg-success"></span>
+                  <span className="font-body-sm text-body-sm text-on-surface font-medium">
+                    Official CRIS / NTES Passenger Reservation System Telemetry
+                  </span>
+                  <span className="text-outline-variant hidden md:inline">•</span>
+                  <span className="font-label text-label text-text-tertiary hidden md:inline">
+                    Live Record Verified
+                  </span>
+                </div>
+                <div className="flex items-center gap-space-sm">
+                  <button
+                    className="px-space-md py-1.5 rounded-lg bg-surface-elevated hover:bg-surface-container-high text-on-surface font-body-sm text-body-sm flex items-center gap-1.5 shadow-sm transition-colors border border-border"
+                    onClick={handleRefresh}
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">refresh</span>
+                    <span>Refresh Record</span>
+                  </button>
+                  <a
+                    className="px-space-md py-1.5 rounded-lg bg-surface-elevated hover:bg-surface-container-high text-on-surface font-body-sm text-body-sm shadow-sm transition-colors border border-border flex items-center gap-1.5"
+                    href="https://www.irctc.co.in/nget/enquiry/refund-rules"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <span>IRCTC Refund Rules</span>
+                    <span className="material-symbols-outlined text-[14px] text-text-tertiary">open_in_new</span>
+                  </a>
+                </div>
               </div>
-              <div className="flex items-center gap-space-sm">
-                <button
-                  className="px-space-md py-1.5 rounded-lg bg-surface-elevated hover:bg-surface-container-high text-on-surface font-body-sm text-body-sm flex items-center gap-1.5 shadow-sm transition-colors border border-border"
-                  onClick={handleRefresh}
-                  type="button"
-                >
-                  <span className="material-symbols-outlined text-[16px]">refresh</span>
-                  <span>Refresh Record</span>
-                </button>
-                <button
-                  className="px-space-md py-1.5 rounded-lg bg-surface-elevated hover:bg-surface-container-high text-on-surface font-body-sm text-body-sm shadow-sm transition-colors border border-border"
-                  onClick={handleFileTdr}
-                  type="button"
-                >
-                  File TDR
-                </button>
-              </div>
-            </div>
+            )}
 
           </div>
         </div>
@@ -2095,13 +1983,12 @@ export default function PnrStatusPage() {
               <span className="font-body-sm text-body-sm text-on-surface font-medium">All IR CTC Sectors Operational</span>
             </div>
             <span className="text-outline-variant hidden sm:inline">•</span>
-            <span className="font-label text-label text-on-surface-variant uppercase">SYNC LATENCY: 24MS</span>
+            <span className="font-label text-label text-on-surface-variant uppercase">PRS ENQUIRY FEED INTEGRATION</span>
           </div>
           <div className="flex items-center gap-space-lg font-body-sm text-body-sm text-on-surface-variant flex-wrap">
-            <a className="hover:text-on-surface transition-colors" href="#">Telemetry Stream</a>
-            <a className="hover:text-on-surface transition-colors" href="#">Radar Nodes</a>
-            <a className="hover:text-on-surface transition-colors" href="#">API Health</a>
-            <a className="hover:text-on-surface transition-colors" href="#">Network Ops</a>
+            <Link className="hover:text-on-surface transition-colors" href="/#radar">Live Radar</Link>
+            <Link className="hover:text-on-surface transition-colors" href="/saved">Saved Trains</Link>
+            <Link className="hover:text-on-surface transition-colors" href="/settings">Settings</Link>
           </div>
         </div>
       </footer>

@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { TopBar } from '@/components/common/TopBar';
 import { StatusPill } from '@/components/common/StatusPill';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { API_BASE } from '@/lib/api';
 
 export default function SharedJourneyPage() {
   const params = useParams();

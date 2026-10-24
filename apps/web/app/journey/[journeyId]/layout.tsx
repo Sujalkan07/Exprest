@@ -7,8 +7,7 @@ import { TopBar } from '@/components/common/TopBar';
 import { StatusPill } from '@/components/common/StatusPill';
 import { useQuery } from '@tanstack/react-query';
 import { createClient } from '@/lib/supabase/client';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { API_BASE } from '@/lib/api';
 
 export default function JourneyLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -17,6 +16,8 @@ export default function JourneyLayout({ children }: { children: React.ReactNode 
   const [showShareModal, setShowShareModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
 
   const { data } = useQuery({
     queryKey: ['journey', journeyId],
@@ -47,39 +48,62 @@ export default function JourneyLayout({ children }: { children: React.ReactNode 
     { label: 'Companion', href: `/journey/${journeyId}/companion` },
   ];
 
-  const handleShareOpen = async () => {
-    if (!shareToken) {
-      try {
-        const supabase = createClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+  const generateShareToken = async () => {
+    setShareLoading(true);
+    setShareError(null);
+    try {
+      const supabase = createClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (session?.access_token) {
-          headers['Authorization'] = `Bearer ${session.access_token}`;
-        }
-
-        const res = await fetch(`${API_BASE}/api/v1/shares`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ journeyId }),
-        });
-        if (res.ok) {
-          const json = await res.json();
-          setShareToken(json?.data?.shareToken || journeyId);
-        } else {
-          setShareToken(journeyId);
-        }
-      } catch {
-        setShareToken(journeyId);
+      if (!session?.access_token) {
+        setShareError('Sign-in required to generate public share links.');
+        setShareLoading(false);
+        return;
       }
+
+      const res = await fetch(`${API_BASE}/api/v1/shares`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ journeyId }),
+      });
+
+      if (!res.ok) {
+        let msg = 'Failed to generate share link';
+        try {
+          const body = await res.json();
+          if (body?.error?.message) msg = body.error.message;
+        } catch {}
+        setShareError(msg);
+        return;
+      }
+
+      const json = await res.json();
+      if (json?.data?.shareToken) {
+        setShareToken(json.data.shareToken);
+      } else {
+        setShareError('Unable to generate valid share token.');
+      }
+    } catch {
+      setShareError('Network error while creating share link.');
+    } finally {
+      setShareLoading(false);
     }
+  };
+
+  const handleShareOpen = () => {
     setShowShareModal(true);
+    if (!shareToken && !shareLoading) {
+      generateShareToken();
+    }
   };
 
   const shareUrl = shareToken
-    ? `${window.location.origin}/share/${shareToken}`
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/share/${shareToken}`
     : '';
 
   const handleCopy = () => {
@@ -184,20 +208,50 @@ export default function JourneyLayout({ children }: { children: React.ReactNode 
                   : ''}
               </div>
             </div>
-            <div className="flex items-center gap-2 mb-4">
-              <input
-                type="text"
-                readOnly
-                value={shareUrl}
-                className="w-full text-xs p-2.5 bg-surface border border-border rounded-control text-text-secondary"
-              />
-              <button
-                onClick={handleCopy}
-                className="px-4 py-2.5 bg-accent text-white text-xs font-semibold rounded-control whitespace-nowrap hover:bg-black"
-              >
-                {copied ? 'Copied!' : 'Copy Link'}
-              </button>
-            </div>
+
+            {shareLoading ? (
+              <div className="py-6 text-center text-xs text-text-secondary flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-[16px] animate-spin">sync</span>
+                Generating secure share link…
+              </div>
+            ) : shareError ? (
+              <div className="space-y-3">
+                <div className="p-3 rounded-control bg-danger/10 border border-danger/30 text-danger text-xs">
+                  {shareError}
+                </div>
+                <div className="flex justify-end gap-2">
+                  {shareError.includes('Sign-in') && (
+                    <Link
+                      href="/settings"
+                      className="px-3 py-1.5 bg-surface border border-border text-xs font-semibold rounded-control text-text hover:bg-surface-elevated"
+                    >
+                      Sign In / Settings
+                    </Link>
+                  )}
+                  <button
+                    onClick={generateShareToken}
+                    className="px-3 py-1.5 bg-accent text-white text-xs font-semibold rounded-control hover:bg-black"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            ) : shareToken ? (
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={shareUrl}
+                  className="w-full text-xs p-2.5 bg-surface border border-border rounded-control text-text-secondary select-all"
+                />
+                <button
+                  onClick={handleCopy}
+                  className="px-4 py-2.5 bg-accent text-white text-xs font-semibold rounded-control whitespace-nowrap hover:bg-black"
+                >
+                  {copied ? 'Copied!' : 'Copy Link'}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import crypto from 'crypto';
 import { TrainService } from '../modules/trains/TrainService.js';
 import { JourneyService } from '../modules/journeys/JourneyService.js';
 import { PnrService } from '../modules/pnr/PnrService.js';
@@ -260,15 +261,23 @@ export async function registerRoutes(fastify: FastifyInstance) {
         return;
       }
 
+      const secret = process.env.AUTH_SECRET || 'dev_secret_change_in_prod';
+      const hmac = crypto
+        .createHmac('sha256', secret)
+        .update(journeyId)
+        .digest('hex')
+        .slice(0, 16);
+      const shareToken = `sh_${journeyId.replace(/^journey_/, '')}_${hmac}`;
+
       const publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000';
       return {
         data: {
-          shareToken: journeyId,
-          url: `${publicAppUrl}/share/${encodeURIComponent(journeyId)}`,
+          shareToken,
+          url: `${publicAppUrl}/share/${encodeURIComponent(shareToken)}`,
           createdByUserId: req.user?.id || null,
           createdAt: new Date().toISOString(),
           persistent: false,
-          note: 'Direct link to journey. Persistent custom tokens require database configuration.',
+          note: 'Signed cryptographic share token.',
         },
         meta: makeMeta(req.id),
       };
@@ -279,13 +288,35 @@ export async function registerRoutes(fastify: FastifyInstance) {
   fastify.get('/api/v1/shares/:shareToken', async (req, reply) => {
     try {
       const { shareToken } = validateInput(shareParamSchema, req.params);
-      // If the shareToken is or contains a journeyId, resolve it directly
-      const journeyId = shareToken.startsWith('journey_') ? shareToken : null;
+      let journeyId: string | null = null;
+
+      if (shareToken.startsWith('sh_')) {
+        const parts = shareToken.slice(3).split('_');
+        if (parts.length >= 2) {
+          const sig = parts[parts.length - 1];
+          const rawId = parts.slice(0, -1).join('_');
+          const reconstructedJourneyId = `journey_${rawId}`;
+          const secret = process.env.AUTH_SECRET || 'dev_secret_change_in_prod';
+          const expectedHmac = crypto
+            .createHmac('sha256', secret)
+            .update(reconstructedJourneyId)
+            .digest('hex')
+            .slice(0, 16);
+
+          if (sig.length === expectedHmac.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedHmac))) {
+            journeyId = reconstructedJourneyId;
+          }
+        }
+      } else if (shareToken.startsWith('journey_')) {
+        // Supported fallback for direct journey IDs
+        journeyId = shareToken;
+      }
+
       if (!journeyId) {
         reply.status(404).send({
           error: {
             code: 'RUN_NOT_FOUND',
-            message: 'Custom share token not found. Persistent share links require database configuration.',
+            message: 'Invalid, tampered, or expired share token.',
             retryable: false,
           },
           meta: makeMeta(req.id),

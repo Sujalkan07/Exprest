@@ -907,29 +907,44 @@ export class RailRadarAdapter implements TrainProvider {
       throw new AppError('PROVIDER_TIMEOUT', `Network error contacting provider: ${this.sanitizeError(err)}`, 502, true);
     }
 
-    if (res.status === 404) {
+    if (!res.ok) {
       const json = await res.json().catch(() => null);
       const errCode = json?.error?.code;
       const errMsg = json?.error?.message;
-      if (errCode === 'PRS:PNR_FLUSHED') {
-        throw new AppError('PNR_FLUSHED', errMsg || 'This PNR record has been flushed or expired after journey completion.', 404);
+
+      if (res.status === 404) {
+        if (errCode === 'PRS:PNR_FLUSHED') {
+          throw new AppError('PNR_FLUSHED', errMsg || 'This PNR record has been flushed or expired after journey completion.', 404);
+        }
+        if (errCode === 'API:DATA_NOT_AVAILABLE') {
+          throw new AppError('PNR_NOT_FOUND', errMsg || 'PNR No. is not valid or unavailable in PRS.', 404);
+        }
+        throw new AppError('PNR_NOT_FOUND', errMsg || 'PNR record not found.', 404);
       }
-      if (errCode === 'API:DATA_NOT_AVAILABLE') {
-        throw new AppError('PNR_NOT_FOUND', errMsg || 'PNR No. is not valid or unavailable in PRS.', 404);
+
+      if (res.status === 401 || res.status === 403) {
+        throw new AppError('UNAUTHORIZED', 'Provider authentication error or plan access restricted.', 502);
       }
-      throw new AppError('PNR_NOT_FOUND', errMsg || 'PNR record not found.', 404);
-    }
 
-    if (res.status === 401 || res.status === 403) {
-      throw new AppError('UNAUTHORIZED', 'Provider authentication error or plan access restricted.', 502);
-    }
+      if (res.status === 429) {
+        throw new AppError('PROVIDER_RATE_LIMITED', 'Upstream provider rate limited. Please retry in a few moments.', 429, true);
+      }
 
-    if (res.status === 429) {
-      throw new AppError('PROVIDER_RATE_LIMITED', 'Upstream provider rate limited. Please retry in a few moments.', 429, true);
-    }
+      // Upstream server errors (500, 502, 503, 504) or PRS socket connection resets
+      if (
+        res.status >= 500 ||
+        errCode === 'SYSTEM:UNKNOWN_ERROR' ||
+        (errMsg && errMsg.toLowerCase().includes('socket'))
+      ) {
+        throw new AppError(
+          'PNR_UNAVAILABLE',
+          'Indian Railways PRS servers are currently unavailable or experiencing connection issues. Please retry in a few moments.',
+          503,
+          true
+        );
+      }
 
-    if (!res.ok) {
-      throw new AppError('PROVIDER_TIMEOUT', `Upstream provider error (${res.status}).`, 502, true);
+      throw new AppError('PROVIDER_TIMEOUT', errMsg || `Upstream provider error (${res.status}).`, 502, true);
     }
 
     const json = await res.json();

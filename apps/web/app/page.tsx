@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Train } from '@exprest/types';
 import { DarkModeToggle } from '@/components/common/DarkModeToggle';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { API_BASE } from '@/lib/api';
 
 interface RecentSearch {
   number: string;
@@ -773,10 +773,8 @@ export default function HomePage() {
               </div>
               <button
                 onClick={() => {
-                  const first = favoriteTrains[0];
-                  if (first) {
-                    router.push(`/journey/${first.journeyId}`);
-                  }
+                  const targetJourney = favoriteTrains[0]?.journeyId || `journey_12951_${getTodayIst()}`;
+                  router.push(`/journey/${targetJourney}`);
                 }}
                 className="h-9 px-4 rounded-lg bg-white hover:bg-neutral-100 text-[#111113] text-[13px] font-medium flex items-center gap-2 transition-colors active:scale-[0.98] whitespace-nowrap shadow-sm"
               >
@@ -805,8 +803,8 @@ export default function HomePage() {
             <span className="font-mono text-[11px]">MapLibre Vector Tiles</span>
           </div>
           <div className="flex items-center gap-5 text-[12px]">
-            <a className="hover:text-on-surface transition-colors" href="#">Rail Grid Map</a>
-            <a className="hover:text-on-surface transition-colors" href="#">Telemetry API</a>
+            <Link className="hover:text-on-surface transition-colors" href="/saved">Saved Trains</Link>
+            <Link className="hover:text-on-surface transition-colors" href="/settings">Settings</Link>
             <Link className="hover:text-on-surface transition-colors" href="/pnr-status">PNR Status</Link>
             <span className="font-mono text-[11px] text-neutral-400">Exprest Core v2.4.1</span>
           </div>
