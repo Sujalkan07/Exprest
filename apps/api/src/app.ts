@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'node:crypto';
 
 // Load .env from process.cwd() or apps/api/.env
 if (fs.existsSync(path.resolve(process.cwd(), '.env'))) {
@@ -77,10 +78,11 @@ async function main() {
       );
     }
     if (!process.env.AUTH_SECRET || process.env.AUTH_SECRET === 'dev_secret_change_in_prod' || process.env.AUTH_SECRET.length < 16) {
-      throw new Error(
-        'Configuration error: Missing or insecure AUTH_SECRET in production. ' +
-        'Please configure a secure AUTH_SECRET (at least 16 characters) in your deployment environment.'
+      console.warn(
+        '[Security Warning] Missing or insecure AUTH_SECRET in production. ' +
+        'Generating a cryptographically secure 256-bit secret for this runtime instance.'
       );
+      process.env.AUTH_SECRET = crypto.randomBytes(32).toString('hex');
     }
   } else {
     if (!process.env.RAILRADAR_API_KEY) {

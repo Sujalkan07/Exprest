@@ -22,7 +22,7 @@ function getShareSigningSecret(): string {
   if (process.env.NODE_ENV === 'production') {
     if (!secret || secret === 'dev_secret_change_in_prod' || secret.length < 16) {
       throw new AppError(
-        'SHARE_CREATE_FAILED',
+        'INTERNAL_ERROR',
         'Secure share signing secret is not configured on the server.',
         500,
         false

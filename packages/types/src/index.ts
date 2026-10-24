@@ -170,6 +170,7 @@ export interface ApiResponse<T> {
 }
 
 export type ErrorCode =
+  | 'INTERNAL_ERROR'
   | 'INVALID_QUERY'
   | 'INVALID_JOURNEY_ID'
   | 'VALIDATION_ERROR'
