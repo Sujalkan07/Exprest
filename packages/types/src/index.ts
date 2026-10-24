@@ -261,6 +261,7 @@ export interface PnrStatusResult {
   quota: string;
   quotaName?: string;
   distanceKm?: number | string | null;
+  bookingFare?: number | string | null;
   chartPrepared: boolean;
   bookingStatus: string;
   confirmationProbability?: number | null;
