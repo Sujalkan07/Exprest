@@ -966,6 +966,74 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       clearJwksCache();
     });
 
+    it('mocked-fetch remote rotation test: proves old remote key is purged and rejected after rotation', async () => {
+      clearJwksCache();
+      let simulatedTime = 100000;
+      setJwksClockForTesting(() => simulatedTime);
+
+      const oldKeypair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const oldJwk = oldKeypair.publicKey.export({ format: 'jwk' });
+      oldJwk.kid = 'remote-old-key-v1';
+      oldJwk.alg = 'ES256';
+
+      const newKeypair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const newJwk = newKeypair.publicKey.export({ format: 'jwk' });
+      newJwk.kid = 'remote-new-key-v2';
+      newJwk.alg = 'ES256';
+
+      // Phase 1: Remote endpoint initially serves ONLY old key
+      let currentRemoteKeys = [oldJwk];
+      setJwksFetchForTesting((async () => {
+        return new Response(JSON.stringify({ keys: currentRemoteKeys }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as any);
+      process.env.SUPABASE_JWKS_URL = 'https://example.supabase.co/auth/v1/.well-known/jwks.json';
+
+      // Initial load
+      await loadJwksIfNeeded('remote-old-key-v1');
+      assert.ok(getTrustedKeyRecord('remote-old-key-v1'), 'Old key must initially be trusted in cache');
+
+      // Create token signed by old key
+      const oldToken = createTestToken(
+        { sub: 'user_active_on_old_key' },
+        { alg: 'ES256', kid: 'remote-old-key-v1', privateKey: oldKeypair.privateKey, registerInJwks: false }
+      );
+      const verifiedOld = await verifyJwtToken(oldToken);
+      assert.ok(verifiedOld, 'Token signed with old key must verify before rotation');
+      assert.equal(verifiedOld.id, 'user_active_on_old_key');
+
+      // Phase 2: Remote provider rotates keys (old key retired, only new key returned)
+      currentRemoteKeys = [newJwk];
+
+      // Advance clock past cache TTL
+      simulatedTime += DEFAULT_JWKS_CACHE_TTL_MS + 5000;
+
+      // Remote refresh triggered by new key observation or refresh
+      await loadJwksIfNeeded('remote-new-key-v2');
+
+      // Assert key replacement: old key is evicted from trusted cache
+      assert.equal(getTrustedKeyRecord('remote-old-key-v1'), null, 'Retired key must be evicted after remote rotation');
+      assert.ok(getTrustedKeyRecord('remote-new-key-v2'), 'New key must now be trusted in cache');
+
+      // Phase 3: Assert retired key token is REJECTED
+      const verifiedOldAfterRotation = await verifyJwtToken(oldToken);
+      assert.equal(verifiedOldAfterRotation, null, 'Token signed with retired key must be strictly rejected after rotation');
+
+      // Assert token signed by new key SUCCEEDS
+      const newToken = createTestToken(
+        { sub: 'user_active_on_new_key' },
+        { alg: 'ES256', kid: 'remote-new-key-v2', privateKey: newKeypair.privateKey, registerInJwks: false }
+      );
+      const verifiedNew = await verifyJwtToken(newToken);
+      assert.ok(verifiedNew, 'Token signed with new key must verify after rotation');
+      assert.equal(verifiedNew.id, 'user_active_on_new_key');
+
+      clearJwksCache();
+      delete process.env.SUPABASE_JWKS_URL;
+    });
+
     it('rejects ES256 tokens missing kid header without ambiguous single-key fallback', async () => {
       clearJwksCache();
       const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
