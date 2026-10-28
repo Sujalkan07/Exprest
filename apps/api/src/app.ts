@@ -20,13 +20,14 @@ import { getCorsAllowedOrigins } from './cors.js';
 import { AppError } from './common/errors/AppError.js';
 
 export function resolveTrustProxy(): boolean | string | string[] {
-  if (process.env.TRUST_PROXY === 'true') return true;
-  if (process.env.TRUST_PROXY === 'false') return false;
-  if (process.env.TRUST_PROXY) {
-    if (process.env.TRUST_PROXY.includes(',')) {
-      return process.env.TRUST_PROXY.split(',').map((s) => s.trim());
+  const val = process.env.TRUST_PROXY?.trim();
+  if (val === 'true' || val === '1') return true;
+  if (val === 'false' || val === '0') return false;
+  if (val && val !== 'undefined') {
+    if (val.includes(',')) {
+      return val.split(',').map((s) => s.trim()).filter(Boolean);
     }
-    return process.env.TRUST_PROXY;
+    return val;
   }
   return process.env.NODE_ENV === 'production';
 }

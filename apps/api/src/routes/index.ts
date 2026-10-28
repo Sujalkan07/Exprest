@@ -57,6 +57,23 @@ export function resolvePublicAppUrl(originHeader?: string): string {
   return configured ? configured.replace(/\/+$/, '') : 'http://localhost:3000';
 }
 
+/**
+ * Sanitizes unexpected error messages for public client responses.
+ * In production, returns a safe generic message to prevent leaking internal stack traces,
+ * database errors, filesystem paths, upstream credentials, or connection details.
+ */
+export function toSafeErrorMessage(err: unknown, defaultMessage: string): string {
+  if (err instanceof AppError) {
+    return err.message;
+  }
+  if (process.env.NODE_ENV === 'production') {
+    return defaultMessage;
+  }
+  return err && typeof err === 'object' && 'message' in err && typeof (err as any).message === 'string'
+    ? (err as any).message
+    : defaultMessage;
+}
+
 export async function registerRoutes(fastify: FastifyInstance) {
   const trainService = new TrainService();
   const journeyService = new JourneyService();
@@ -80,8 +97,13 @@ export async function registerRoutes(fastify: FastifyInstance) {
       if (err instanceof AppError) {
         reply.status(err.statusCode).send(err.toResponse(req.id));
       } else {
+        req.log.error({ err, reqId: req.id }, 'Train search provider failure');
         reply.status(500).send({
-          error: { code: 'PROVIDER_TIMEOUT', message: err.message, retryable: true },
+          error: {
+            code: 'PROVIDER_TIMEOUT',
+            message: toSafeErrorMessage(err, 'Train search is temporarily unavailable.'),
+            retryable: true,
+          },
           meta: makeMeta(req.id),
         });
       }
@@ -98,6 +120,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
       if (err instanceof AppError) {
         reply.status(err.statusCode).send(err.toResponse(req.id));
       } else {
+        req.log.error({ err, reqId: req.id }, 'Journey details lookup failure');
         reply.status(500).send({
           error: { code: 'RUN_NOT_FOUND', message: 'Journey not found.', retryable: false },
           meta: makeMeta(req.id),
@@ -116,8 +139,13 @@ export async function registerRoutes(fastify: FastifyInstance) {
       if (err instanceof AppError) {
         reply.status(err.statusCode).send(err.toResponse(req.id));
       } else {
+        req.log.error({ err, reqId: req.id }, 'Live journey lookup failure');
         reply.status(404).send({
-          error: { code: 'LIVE_NOT_FOUND', message: err?.message || 'No live data found.', retryable: false },
+          error: {
+            code: 'LIVE_NOT_FOUND',
+            message: toSafeErrorMessage(err, 'No live data found.'),
+            retryable: false,
+          },
           meta: makeMeta(req.id),
         });
       }
@@ -168,8 +196,10 @@ export async function registerRoutes(fastify: FastifyInstance) {
           reply.raw.write(`event: journey.updated\ndata: ${JSON.stringify(liveData)}\n\n`);
         }
       } catch (err: any) {
+        req.log.error({ err, reqId: req.id, journeyId }, 'SSE live telemetry stream update failure');
         if (!isClosed && !req.raw.destroyed && !reply.raw.writableEnded) {
-          reply.raw.write(`event: journey.error\ndata: ${JSON.stringify({ message: err?.message || 'Stream update error' })}\n\n`);
+          const safeMsg = toSafeErrorMessage(err, 'Stream update error');
+          reply.raw.write(`event: journey.error\ndata: ${JSON.stringify({ message: safeMsg })}\n\n`);
         }
       } finally {
         isFetching = false;
@@ -222,8 +252,13 @@ export async function registerRoutes(fastify: FastifyInstance) {
       if (err instanceof AppError) {
         reply.status(err.statusCode).send(err.toResponse(req.id));
       } else {
+        req.log.error({ err, reqId: req.id }, 'Journey analytics lookup failure');
         reply.status(500).send({
-          error: { code: 'RUN_NOT_FOUND', message: err?.message || 'Analytics unavailable.', retryable: false },
+          error: {
+            code: 'RUN_NOT_FOUND',
+            message: toSafeErrorMessage(err, 'Analytics unavailable.'),
+            retryable: false,
+          },
           meta: makeMeta(req.id),
         });
       }
@@ -240,8 +275,13 @@ export async function registerRoutes(fastify: FastifyInstance) {
       if (err instanceof AppError) {
         reply.status(err.statusCode).send(err.toResponse(req.id));
       } else {
+        req.log.error({ err, reqId: req.id }, 'Journey weather lookup failure');
         reply.status(500).send({
-          error: { code: 'WEATHER_UNAVAILABLE', message: err?.message || 'Weather unavailable.', retryable: true },
+          error: {
+            code: 'WEATHER_UNAVAILABLE',
+            message: toSafeErrorMessage(err, 'Weather unavailable.'),
+            retryable: true,
+          },
           meta: makeMeta(req.id),
         });
       }
@@ -259,8 +299,13 @@ export async function registerRoutes(fastify: FastifyInstance) {
       if (err instanceof AppError) {
         reply.status(err.statusCode).send(err.toResponse(req.id));
       } else {
+        req.log.error({ err, reqId: req.id }, 'Journey POI lookup failure');
         reply.status(500).send({
-          error: { code: 'POI_UNAVAILABLE', message: err?.message || 'POIs unavailable.', retryable: true },
+          error: {
+            code: 'POI_UNAVAILABLE',
+            message: toSafeErrorMessage(err, 'POIs unavailable.'),
+            retryable: true,
+          },
           meta: makeMeta(req.id),
         });
       }
@@ -468,10 +513,11 @@ export async function registerRoutes(fastify: FastifyInstance) {
         if (err instanceof AppError) {
           reply.status(err.statusCode).send(err.toResponse(req.id));
         } else {
+          req.log.error({ err, reqId: req.id }, 'PNR lookup failure');
           reply.status(500).send({
             error: {
               code: 'PROVIDER_TIMEOUT',
-              message: err?.message || 'PNR status lookup failed.',
+              message: toSafeErrorMessage(err, 'PNR status lookup failed.'),
               retryable: true,
             },
             meta: makeMeta(req.id),
@@ -512,10 +558,11 @@ export async function registerRoutes(fastify: FastifyInstance) {
         if (err instanceof AppError) {
           reply.status(err.statusCode).send(err.toResponse(req.id));
         } else {
+          req.log.error({ err, reqId: req.id }, 'Train fare lookup failure');
           reply.status(500).send({
             error: {
               code: 'PROVIDER_TIMEOUT',
-              message: err?.message || 'Train fare lookup failed.',
+              message: toSafeErrorMessage(err, 'Train fare lookup failed.'),
               retryable: true,
             },
             meta: makeMeta(req.id),

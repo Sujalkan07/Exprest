@@ -2,6 +2,11 @@ export interface CorsEnv {
   NODE_ENV?: string;
   PUBLIC_APP_URL?: string;
   CORS_ALLOWED_ORIGINS?: string;
+  /**
+   * Optional alias for backward compatibility with earlier configurations/tests.
+   * CORS_ALLOWED_ORIGINS takes precedence when both are provided.
+   */
+  CORS_ORIGINS?: string;
 }
 
 /**
@@ -22,10 +27,11 @@ export function normalizeOrigin(input: string): string {
 /**
  * Resolves allowed CORS origins based on environment configuration.
  * - In development / test: Allows localhost and 127.0.0.1 across ports, plus PUBLIC_APP_URL.
- * - In production: Enforces a strict allowlist from PUBLIC_APP_URL and CORS_ALLOWED_ORIGINS.
+ * - In production: Enforces a strict allowlist from PUBLIC_APP_URL and CORS_ALLOWED_ORIGINS (or legacy CORS_ORIGINS).
  */
 export function getCorsAllowedOrigins(env: CorsEnv = process.env): (string | RegExp)[] {
   const isProduction = env.NODE_ENV === 'production';
+  const configuredOrigins = env.CORS_ALLOWED_ORIGINS || env.CORS_ORIGINS;
 
   if (!isProduction) {
     const devOrigins: (string | RegExp)[] = [
@@ -40,8 +46,8 @@ export function getCorsAllowedOrigins(env: CorsEnv = process.env): (string | Reg
       }
     }
 
-    if (env.CORS_ALLOWED_ORIGINS) {
-      for (const origin of env.CORS_ALLOWED_ORIGINS.split(',')) {
+    if (configuredOrigins) {
+      for (const origin of configuredOrigins.split(',')) {
         const normalized = normalizeOrigin(origin);
         if (normalized && !devOrigins.includes(normalized)) {
           devOrigins.push(normalized);
@@ -62,8 +68,8 @@ export function getCorsAllowedOrigins(env: CorsEnv = process.env): (string | Reg
     }
   }
 
-  if (env.CORS_ALLOWED_ORIGINS) {
-    for (const origin of env.CORS_ALLOWED_ORIGINS.split(',')) {
+  if (configuredOrigins) {
+    for (const origin of configuredOrigins.split(',')) {
       const normalized = normalizeOrigin(origin);
       if (normalized) {
         allowed.add(normalized);

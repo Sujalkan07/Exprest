@@ -5,6 +5,14 @@ import { buildApp, validateStartupEnvironment } from '../src/app.js';
 import { createTestToken } from '../src/common/middleware/auth.js';
 import { getShareSigningSecret, resolvePublicAppUrl } from '../src/routes/index.js';
 
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}
+
 describe('Share Link Security & Cryptographic Validation Suite', () => {
   const secret = process.env.AUTH_SECRET || 'dev_secret_change_in_prod';
   const journeyId = 'journey_12951_2026-10-24';
@@ -154,9 +162,11 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
   it('9. Missing or weak signing secret in production causes 500 configuration failure', async () => {
     const originalEnv = process.env.NODE_ENV;
     const originalSecret = process.env.AUTH_SECRET;
+    const originalJwtSecret = process.env.SUPABASE_JWT_SECRET;
 
     try {
       process.env.NODE_ENV = 'production';
+      process.env.SUPABASE_JWT_SECRET = 'valid_production_supabase_jwt_secret_test_123';
       process.env.AUTH_SECRET = 'dev_secret_change_in_prod'; // Weak / default secret
 
       const app = await buildApp();
@@ -177,8 +187,9 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
       assert.equal(body.error.code, 'INTERNAL_ERROR');
       await app.close();
     } finally {
-      process.env.NODE_ENV = originalEnv;
-      process.env.AUTH_SECRET = originalSecret;
+      restoreEnv('NODE_ENV', originalEnv);
+      restoreEnv('AUTH_SECRET', originalSecret);
+      restoreEnv('SUPABASE_JWT_SECRET', originalJwtSecret);
     }
   });
 
@@ -356,7 +367,7 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
 
       // Instance 1 creates a token
       const app1 = await buildApp();
-      const token = createTestToken({ sub: 'user_123' }, { secret: testSecret });
+      const token = createTestToken({ sub: 'user_123' });
       const createRes = await app1.inject({
         method: 'POST',
         url: '/api/v1/shares',
@@ -380,7 +391,7 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
       assert.equal(body.data.journeyId, journeyId);
       await app2.close();
     } finally {
-      process.env.AUTH_SECRET = originalSecret;
+      restoreEnv('AUTH_SECRET', originalSecret);
     }
   });
 });

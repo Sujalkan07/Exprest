@@ -20,6 +20,45 @@ declare module 'fastify' {
 export const SUPABASE_CURRENT_ECC_KEY_ID = 'ee6ac6d7-bb37-4adb-833b-588711018d70';
 export const SUPABASE_PREVIOUS_HS256_KEY_ID = '6dbf8698-bdff-4de3-ac82-b75bc50d312e';
 
+/**
+ * Resolves the expected JWT audience for Supabase tokens.
+ * Defaults to standard Supabase access token audience 'authenticated'.
+ */
+export function getExpectedAudience(): string {
+  return process.env.SUPABASE_JWT_AUDIENCE || 'authenticated';
+}
+
+/**
+ * Resolves the expected JWT issuer from SUPABASE_JWT_ISSUER or SUPABASE_URL.
+ * Normalizes trailing slashes.
+ */
+export function getExpectedIssuer(): string | undefined {
+  if (process.env.SUPABASE_JWT_ISSUER) {
+    return process.env.SUPABASE_JWT_ISSUER.trim().replace(/\/+$/, '');
+  }
+  const rawUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (rawUrl && rawUrl.trim() !== '') {
+    return `${rawUrl.trim().replace(/\/+$/, '')}/auth/v1`;
+  }
+  return undefined;
+}
+
+/**
+ * Resolves the dedicated Supabase JWT secret for symmetric HS256 verification.
+ * In production, strictly requires SUPABASE_JWT_SECRET and NEVER falls back
+ * to AUTH_SECRET or development defaults.
+ */
+export function getSupabaseJwtSecret(): string | undefined {
+  if (process.env.SUPABASE_JWT_SECRET) {
+    return process.env.SUPABASE_JWT_SECRET;
+  }
+  if (process.env.NODE_ENV === 'production') {
+    // Fail closed: Never use AUTH_SECRET or dev secrets in production
+    return undefined;
+  }
+  return 'dev_secret_change_in_prod';
+}
+
 interface JwkRecord {
   keyObject: crypto.KeyObject;
   alg: string;
@@ -171,10 +210,39 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
       return null;
     }
 
+    // 5. Validate audience (aud) claim
+    const expectedAudience = getExpectedAudience();
+    if (payload.aud !== undefined) {
+      if (Array.isArray(payload.aud)) {
+        if (!payload.aud.includes(expectedAudience)) {
+          return null;
+        }
+      } else if (payload.aud !== expectedAudience) {
+        return null;
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      // In production, Supabase tokens must include the audience claim
+      return null;
+    }
+
+    // 6. Validate issuer (iss) claim
+    const expectedIssuer = getExpectedIssuer();
+    if (expectedIssuer) {
+      if (payload.iss) {
+        const normalizedIss = String(payload.iss).trim().replace(/\/+$/, '');
+        if (normalizedIss !== expectedIssuer) {
+          return null;
+        }
+      } else if (process.env.NODE_ENV === 'production') {
+        // In production, when an expected issuer is configured, tokens must specify it
+        return null;
+      }
+    }
+
     const dataToVerify = Buffer.from(`${headerB64}.${payloadB64}`, 'utf-8');
     const signatureBuffer = Buffer.from(signatureB64, 'base64url');
 
-    // 5. Algorithm-specific cryptographic verification
+    // 7. Algorithm-specific cryptographic verification
     if (alg === 'ES256') {
       // Asymmetric verification via ECDSA P-256 public key from trusted JWKS
       const kid = header.kid;
@@ -220,13 +288,10 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
         return null;
       }
 
-      const secret =
-        process.env.SUPABASE_JWT_SECRET ||
-        process.env.AUTH_SECRET ||
-        (process.env.NODE_ENV !== 'production' ? 'dev_secret_change_in_prod' : undefined);
+      const secret = getSupabaseJwtSecret();
 
       if (!secret) {
-        // Fail closed in production if secret is missing
+        // Fail closed: In production, strictly require SUPABASE_JWT_SECRET (never fall back to AUTH_SECRET)
         return null;
       }
 
@@ -315,8 +380,14 @@ export function createTestToken(
       ? options.expiresInSeconds
       : 3600;
 
+  const defaultAudience = getExpectedAudience();
+  const defaultIssuer = getExpectedIssuer();
+
   const fullPayload = {
     exp: Math.floor(Date.now() / 1000) + expSeconds,
+    aud: defaultAudience,
+    role: 'authenticated',
+    ...(defaultIssuer ? { iss: defaultIssuer } : {}),
     ...payload,
   };
 
@@ -353,8 +424,7 @@ export function createTestToken(
     const kid = options.kid || SUPABASE_PREVIOUS_HS256_KEY_ID;
     const secret =
       options.secret ||
-      process.env.SUPABASE_JWT_SECRET ||
-      process.env.AUTH_SECRET ||
+      getSupabaseJwtSecret() ||
       'dev_secret_change_in_prod';
 
     const header = { alg: 'HS256', typ: 'JWT', kid };
