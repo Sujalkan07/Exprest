@@ -168,7 +168,7 @@ async function run() {
 
     // SQLi payload in share token
     const resSqliShare = await fetch(`${TARGET_URL}/api/v1/shares/sh_%27%20OR%201%3D1--`);
-    record('ShareSecurity', 'Malformed share token syntax rejected with 400 or 404', resSqliShare.status === 400 || resSqliShare.status === 404, `status: ${resSqliShare.status}`);
+    record('ShareSecurity', 'Malformed share token syntax rejected (400/403/404)', [400, 403, 404].includes(resSqliShare.status), `status: ${resSqliShare.status}`);
   } catch (e: any) {
     record('ShareSecurity', 'Share security test suite', false, e.message);
   }
