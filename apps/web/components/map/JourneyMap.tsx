@@ -5,6 +5,11 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { createStationPopupNode, createTrainMarkerNode } from './mapDOMUtils';
 
+// Explicitly register worker url to ensure Next.js / Webpack uses the bundled same-origin static worker
+if (typeof window !== 'undefined' && typeof maplibregl.setWorkerUrl === 'function') {
+  maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs');
+}
+
 interface StopInfo {
   stationId: string;
   stationName?: string;
@@ -73,11 +78,12 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
   const map = useRef<maplibregl.Map | null>(null);
   const trainMarkerRef = useRef<maplibregl.Marker | null>(null);
   const stopMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const hasInitialFitRef = useRef(false);
   const [isFollowing, setIsFollowing] = useState(true);
   const [mapReady, setMapReady] = useState(false);
 
   const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_KEY || '';
-  if (!mapTilerKey) {
+  if (!mapTilerKey && typeof window !== 'undefined') {
     console.warn('[JourneyMap] NEXT_PUBLIC_MAPTILER_KEY environment variable is not defined.');
   }
 
@@ -129,7 +135,11 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
   useEffect(() => {
     if (!mapContainer.current) return;
 
-    map.current = new maplibregl.Map({
+    if (typeof maplibregl.setWorkerUrl === 'function') {
+      maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs');
+    }
+
+    const mapInstance = new maplibregl.Map({
       container: mapContainer.current,
       style: `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${mapTilerKey}`,
       center,
@@ -140,137 +150,205 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
       attributionControl: false,
     });
 
-    map.current.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
-    map.current.on('dragstart', () => setIsFollowing(false));
-    map.current.on('zoomstart', (e: { originalEvent?: unknown }) => { if (e.originalEvent) setIsFollowing(false); });
+    map.current = mapInstance;
 
-    map.current.on('load', () => {
-      if (!map.current) return;
+    mapInstance.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
+    mapInstance.on('dragstart', () => setIsFollowing(false));
+    mapInstance.on('zoomstart', (e: { originalEvent?: unknown }) => { if (e.originalEvent) setIsFollowing(false); });
+
+    mapInstance.on('error', (e) => {
+      console.warn('[JourneyMap] MapLibre notice:', e?.error?.message || e);
+    });
+
+    mapInstance.on('load', () => {
       setMapReady(true);
+      mapInstance.resize();
+    });
 
-      if (hasRoute && routeCoordinates) {
-        if (futureCoords.length > 1) {
-          map.current.addSource('route-future', {
-            type: 'geojson',
-            data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: futureCoords } }
-          });
-          map.current.addLayer({
-            id: 'route-future-line',
-            type: 'line',
-            source: 'route-future',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#475569', 'line-width': 3, 'line-dasharray': [2, 3] }
-          });
-        }
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && mapContainer.current) {
+      resizeObserver = new ResizeObserver(() => {
+        mapInstance.resize();
+      });
+      resizeObserver.observe(mapContainer.current);
+    }
 
-        if (pastCoords.length > 1) {
-          map.current.addSource('route-past', {
-            type: 'geojson',
-            data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: pastCoords } }
-          });
-          map.current.addLayer({
-            id: 'route-past-glow',
-            type: 'line',
-            source: 'route-past',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#00e5ff', 'line-width': 8, 'line-opacity': 0.3, 'line-blur': 4 }
-          });
-          map.current.addLayer({
-            id: 'route-past-line',
-            type: 'line',
-            source: 'route-past',
-            layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#00e5ff', 'line-width': 4 }
-          });
-        }
-
-        const bounds = new maplibregl.LngLatBounds();
-        routeCoordinates.forEach(coord => bounds.extend(coord));
-        map.current.fitBounds(bounds, { padding: { top: 100, bottom: 100, left: 400, right: 100 }, maxZoom: 10 });
-      }
-
-      // --- Station Markers ---
-      // Clear existing markers if any
+    return () => {
+      resizeObserver?.disconnect();
       stopMarkersRef.current.forEach(m => m.remove());
       stopMarkersRef.current = [];
+      trainMarkerRef.current?.remove();
+      trainMarkerRef.current = null;
+      mapInstance.remove();
+      map.current = null;
+      setMapReady(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapTilerKey]);
 
-      stationList.forEach((stn) => {
-        const isPast = stn.status === 'departed' || stn.status === 'at-station';
-        
-        // Root container element: MapLibre exclusively manages inline transform (translate) on this
-        const markerRoot = document.createElement('div');
-        markerRoot.className = 'station-marker-root';
-        markerRoot.setAttribute('role', 'button');
-        markerRoot.setAttribute('tabindex', '0');
-        markerRoot.setAttribute('aria-label', `${stn.stationId} ${stn.stationName || ''}`);
-        markerRoot.style.cssText = `
-          width: 24px;
-          height: 24px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          z-index: 10;
-        `;
-        
-        // Inner visual dot: child element handles visual scale and hover transformations
-        // This ensures markerRoot's transform is NEVER overwritten by mouse/click events!
-        const dot = document.createElement('div');
-        dot.className = 'station-marker-dot';
-        dot.style.cssText = `
-          width: 10px;
-          height: 10px;
-          border-radius: 50%;
-          background: ${isPast ? '#00e5ff' : '#64748b'};
-          box-shadow: ${isPast ? '0 0 10px #00e5ff' : 'none'};
-          transition: transform 0.15s ease-out, background 0.15s ease-out;
-          pointer-events: none;
-        `;
-        
-        markerRoot.onmouseenter = () => { dot.style.transform = 'scale(1.5)'; };
-        markerRoot.onmouseleave = () => { dot.style.transform = 'scale(1)'; };
-        markerRoot.onfocus = () => { dot.style.transform = 'scale(1.5)'; };
-        markerRoot.onblur = () => { dot.style.transform = 'scale(1)'; };
+  // Synchronize route lines & station markers whenever data arrives or changes
+  useEffect(() => {
+    const mapInstance = map.current;
+    if (!mapReady || !mapInstance) return;
 
-        markerRoot.appendChild(dot);
+    // --- Route Layers (Future & Past) ---
+    if (hasRoute && routeCoordinates && routeCoordinates.length > 0) {
+      const futureGeoJson = {
+        type: 'Feature' as const,
+        properties: {},
+        geometry: {
+          type: 'LineString' as const,
+          coordinates: futureCoords.length > 1 ? futureCoords : [],
+        },
+      };
 
-        const actTimeStr = formatTime(
-          stn.actualArrival || stn.scheduledArrival,
-          !stn.actualArrival ? (stn.delayMinutes || 0) : 0
-        );
-        
-        const popupNode = createStationPopupNode({
-          stationId: stn.stationId,
-          stationName: stn.stationName,
-          etaStr: actTimeStr,
+      const futureSource = mapInstance.getSource('route-future') as maplibregl.GeoJSONSource | undefined;
+      if (futureSource) {
+        futureSource.setData(futureGeoJson);
+      } else if (futureCoords.length > 1) {
+        mapInstance.addSource('route-future', {
+          type: 'geojson',
+          data: futureGeoJson,
         });
+        mapInstance.addLayer({
+          id: 'route-future-line',
+          type: 'line',
+          source: 'route-future',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#475569', 'line-width': 3, 'line-dasharray': [2, 3] },
+        });
+      }
 
-        const popup = new maplibregl.Popup({ offset: 12, closeButton: false, closeOnClick: true })
-          .setDOMContent(popupNode);
+      const pastGeoJson = {
+        type: 'Feature' as const,
+        properties: {},
+        geometry: {
+          type: 'LineString' as const,
+          coordinates: pastCoords.length > 1 ? pastCoords : [],
+        },
+      };
 
-        markerRoot.onkeydown = (e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            marker.togglePopup();
+      const pastSource = mapInstance.getSource('route-past') as maplibregl.GeoJSONSource | undefined;
+      if (pastSource) {
+        pastSource.setData(pastGeoJson);
+      } else if (pastCoords.length > 1) {
+        mapInstance.addSource('route-past', {
+          type: 'geojson',
+          data: pastGeoJson,
+        });
+        mapInstance.addLayer({
+          id: 'route-past-glow',
+          type: 'line',
+          source: 'route-past',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#00e5ff', 'line-width': 8, 'line-opacity': 0.3, 'line-blur': 4 },
+        });
+        mapInstance.addLayer({
+          id: 'route-past-line',
+          type: 'line',
+          source: 'route-past',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#00e5ff', 'line-width': 4 },
+        });
+      }
+
+      if (!hasInitialFitRef.current) {
+        const bounds = new maplibregl.LngLatBounds();
+        routeCoordinates.forEach((coord) => {
+          if (Array.isArray(coord) && isValidCoordinate(coord[1], coord[0])) {
+            bounds.extend(coord);
           }
-        };
+        });
+        if (!bounds.isEmpty()) {
+          mapInstance.fitBounds(bounds, { padding: { top: 100, bottom: 100, left: 400, right: 100 }, maxZoom: 10 });
+          hasInitialFitRef.current = true;
+        }
+      }
+    }
 
-        const marker = new maplibregl.Marker({ element: markerRoot, anchor: 'center' })
-          .setLngLat([stn.stationLon!, stn.stationLat!])
-          .setPopup(popup)
-          .addTo(map.current!);
-          
-        stopMarkersRef.current.push(marker);
+    // --- Station Markers ---
+    stopMarkersRef.current.forEach((m) => m.remove());
+    stopMarkersRef.current = [];
+
+    stationList.forEach((stn) => {
+      const isPast = stn.status === 'departed' || stn.status === 'at-station';
+
+      const markerRoot = document.createElement('div');
+      markerRoot.className = 'station-marker-root';
+      markerRoot.setAttribute('role', 'button');
+      markerRoot.setAttribute('tabindex', '0');
+      markerRoot.setAttribute('aria-label', `${stn.stationId} ${stn.stationName || ''}`);
+      markerRoot.style.cssText = `
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 10;
+      `;
+
+      const dot = document.createElement('div');
+      dot.className = 'station-marker-dot';
+      dot.style.cssText = `
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: ${isPast ? '#00e5ff' : '#64748b'};
+        box-shadow: ${isPast ? '0 0 10px #00e5ff' : 'none'};
+        transition: transform 0.15s ease-out, background 0.15s ease-out;
+        pointer-events: none;
+      `;
+
+      markerRoot.onmouseenter = () => { dot.style.transform = 'scale(1.5)'; };
+      markerRoot.onmouseleave = () => { dot.style.transform = 'scale(1)'; };
+      markerRoot.onfocus = () => { dot.style.transform = 'scale(1.5)'; };
+      markerRoot.onblur = () => { dot.style.transform = 'scale(1)'; };
+      markerRoot.appendChild(dot);
+
+      const actTimeStr = formatTime(
+        stn.actualArrival || stn.scheduledArrival,
+        !stn.actualArrival ? (stn.delayMinutes || 0) : 0
+      );
+
+      const popupNode = createStationPopupNode({
+        stationId: stn.stationId,
+        stationName: stn.stationName,
+        etaStr: actTimeStr,
       });
 
-      // --- Train Radar Marker ---
-      if (hasPosition && currentPosition) {
-        const speed = Math.round(currentPosition.speedKph || 0);
-        const heading = Math.round(currentPosition.heading || 38);
-        
-        const nextStopTarget = stationList[currentStopIndex + 1];
-        const nextEtaStr = formatTime(nextStopTarget?.actualArrival || nextStopTarget?.scheduledArrival);
+      const popup = new maplibregl.Popup({ offset: 12, closeButton: false, closeOnClick: true })
+        .setDOMContent(popupNode);
 
+      const marker = new maplibregl.Marker({ element: markerRoot, anchor: 'center' })
+        .setLngLat([stn.stationLon!, stn.stationLat!])
+        .setPopup(popup)
+        .addTo(mapInstance);
+
+      markerRoot.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          marker.togglePopup();
+        }
+      };
+
+      stopMarkersRef.current.push(marker);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapReady, routeCoordinates, stops, stations]);
+
+  // Synchronize Train Marker & Camera
+  useEffect(() => {
+    const mapInstance = map.current;
+    if (!mapReady || !mapInstance) return;
+
+    if (hasPosition && currentPosition) {
+      const speed = Math.round(currentPosition.speedKph || 0);
+      const heading = Math.round(currentPosition.heading || 38);
+      const nextStopTarget = stationList[currentStopIndex + 1];
+      const nextEtaStr = formatTime(nextStopTarget?.actualArrival || nextStopTarget?.scheduledArrival);
+
+      if (!trainMarkerRef.current) {
         const trainRoot = createTrainMarkerNode({
           speed,
           heading,
@@ -280,21 +358,20 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
 
         trainMarkerRef.current = new maplibregl.Marker({ element: trainRoot, anchor: 'center' })
           .setLngLat([currentPosition.longitude, currentPosition.latitude])
-          .addTo(map.current!);
+          .addTo(mapInstance);
+      } else {
+        trainMarkerRef.current.setLngLat([currentPosition.longitude, currentPosition.latitude]);
       }
-    });
 
-    return () => {
-      stopMarkersRef.current.forEach(m => m.remove());
-      stopMarkersRef.current = [];
-      trainMarkerRef.current?.remove();
+      if (isFollowing) {
+        mapInstance.panTo([currentPosition.longitude, currentPosition.latitude], { duration: 1000 });
+      }
+    } else if (trainMarkerRef.current) {
+      trainMarkerRef.current.remove();
       trainMarkerRef.current = null;
-      map.current?.remove();
-      map.current = null;
-      setMapReady(false);
-    };
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapTilerKey]);
+  }, [mapReady, currentPosition, isFollowing]);
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -328,21 +405,6 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
       }
     }
   }));
-
-  // Auto-follow effect (safely checks finite coordinates including 0)
-  useEffect(() => {
-    if (
-      isFollowing &&
-      mapReady &&
-      trainMarkerRef.current &&
-      currentPosition &&
-      isValidCoordinate(currentPosition.latitude, currentPosition.longitude)
-    ) {
-      trainMarkerRef.current.setLngLat([currentPosition.longitude, currentPosition.latitude]);
-      map.current?.panTo([currentPosition.longitude, currentPosition.latitude], { duration: 1000 });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPosition?.latitude, currentPosition?.longitude, isFollowing, mapReady]);
 
   return (
     <div className={`relative ${className}`}>

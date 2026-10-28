@@ -563,7 +563,7 @@ export default function JourneyOverviewPage() {
             {/* Map */}
             <JourneyMap
               routeCoordinates={journey?.route?.coordinates}
-              currentPosition={journey?.run?.currentLocation}
+              currentPosition={journey?.livePosition || journey?.run?.currentLocation}
               stops={journey?.stops}
               className="w-full h-full absolute inset-0"
             />
