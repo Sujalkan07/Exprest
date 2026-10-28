@@ -1,5 +1,6 @@
 import './globals.css';
 import React from 'react';
+import { headers } from 'next/headers';
 import { Providers } from '@/components/common/Providers';
 
 export const metadata = {
@@ -7,16 +8,21 @@ export const metadata = {
   description: 'Know where your train is, what happens next, and what surrounds the journey — in one calm interface.',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const headerList = await headers();
+  const nonce = headerList.get('x-nonce') ?? undefined;
+
   return (
     <html lang="en">
       <head>
         {/* Theme and reduced-motion initializer — runs before first paint to avoid flash */}
-        <script dangerouslySetInnerHTML={{ __html: `
+        <script
+          nonce={nonce}
+          dangerouslySetInnerHTML={{ __html: `
           (function() {
             try {
               var stored = localStorage.getItem('exprest_dark');

@@ -6,6 +6,7 @@ import {
   buildApp,
   resolveTrustProxy,
   validateStartupEnvironment,
+  getStartupDiagnostics,
   cleanSensitiveLogText,
   errorLogSerializer,
 } from '../src/app.js';
@@ -23,6 +24,16 @@ import {
   getJwksCacheExpiresAt,
   getJwksCacheSize,
   DEFAULT_JWKS_CACHE_TTL_MS,
+  JWKS_FETCH_THROTTLE_MS,
+  MAX_STALE_GRACE_PERIOD_MS,
+  MAX_JWKS_PAYLOAD_BYTES,
+  MAX_JWKS_KEY_COUNT,
+  setJwksClockForTesting,
+  setJwksFetchForTesting,
+  getStaleGraceExpiresAt,
+  getLastJwksFetchAttempt,
+  getTrustedKeyRecord,
+  loadJwksIfNeeded,
   SUPABASE_CURRENT_ECC_KEY_ID,
   SUPABASE_PREVIOUS_HS256_KEY_ID,
 } from '../src/common/middleware/auth.js';
@@ -408,6 +419,83 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         restoreEnv('AUTH_SECRET', originalAuth);
         restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
         restoreEnv('SUPABASE_URL', originalSupabaseUrl);
+      }
+    });
+
+    it('strictly requires HTTPS URLs in production for SUPABASE_URL and PUBLIC_APP_URL', () => {
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.RAILRADAR_API_KEY = 'valid_radar_key_12345';
+        process.env.AUTH_SECRET = 'valid_auth_secret_1234567890';
+        process.env.SUPABASE_JWT_SECRET = 'strong_production_supabase_jwt_secret_xyz123';
+
+        // Insecure HTTP protocol for SUPABASE_URL in production is rejected
+        process.env.SUPABASE_URL = 'http://insecure-supabase.co';
+        assert.throws(
+          () => validateStartupEnvironment(),
+          /SUPABASE_URL must use https:\/\/ protocol in production/
+        );
+
+        // Malformed SUPABASE_URL is rejected
+        process.env.SUPABASE_URL = 'not-a-valid-url';
+        assert.throws(
+          () => validateStartupEnvironment(),
+          /Invalid SUPABASE_URL/
+        );
+
+        // Valid HTTPS SUPABASE_URL passes
+        process.env.SUPABASE_URL = 'https://valid-tenant.supabase.co';
+
+        // Insecure HTTP protocol for PUBLIC_APP_URL in production is rejected
+        process.env.PUBLIC_APP_URL = 'http://insecure-app.vercel.app';
+        assert.throws(
+          () => validateStartupEnvironment(),
+          /PUBLIC_APP_URL must use https:\/\/ protocol in production/
+        );
+
+        // Valid HTTPS PUBLIC_APP_URL passes
+        process.env.PUBLIC_APP_URL = 'https://exprest.vercel.app';
+        assert.doesNotThrow(() => validateStartupEnvironment());
+      } finally {
+        restoreEnv('NODE_ENV', originalEnv);
+        restoreEnv('RAILRADAR_API_KEY', originalKey);
+        restoreEnv('AUTH_SECRET', originalAuth);
+        restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
+        delete process.env.PUBLIC_APP_URL;
+      }
+    });
+
+    it('getStartupDiagnostics provides safe diagnostic telemetry without secret leakage', () => {
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.RAILRADAR_API_KEY = 'super_secret_railradar_api_key_xyz';
+        process.env.AUTH_SECRET = 'super_secret_auth_secret_longer_than_16_chars';
+        process.env.SUPABASE_JWT_SECRET = 'super_secret_jwt_signing_key_for_supabase';
+        process.env.SUPABASE_URL = 'https://safe-project.supabase.co';
+        process.env.PUBLIC_APP_URL = 'https://exprest.vercel.app';
+
+        const diag = getStartupDiagnostics();
+        assert.equal(diag.nodeEnv, 'production');
+        assert.equal(diag.hasRailRadarApiKey, true);
+        assert.equal(diag.hasAuthSecret, true);
+        assert.equal(diag.hasSupabaseJwtSecret, true);
+        assert.equal(diag.authSecretLength, 45);
+        assert.equal(diag.supabaseIssuer, 'https://safe-project.supabase.co/auth/v1');
+        assert.equal(diag.publicAppUrl, 'https://exprest.vercel.app');
+
+        // Confirm string representation does NOT contain raw secret values
+        const serialized = JSON.stringify(diag);
+        assert.ok(!serialized.includes('super_secret_railradar_api_key_xyz'), 'Raw RAILRADAR_API_KEY must not leak');
+        assert.ok(!serialized.includes('super_secret_auth_secret_longer_than_16_chars'), 'Raw AUTH_SECRET must not leak');
+        assert.ok(!serialized.includes('super_secret_jwt_signing_key_for_supabase'), 'Raw SUPABASE_JWT_SECRET must not leak');
+      } finally {
+        restoreEnv('NODE_ENV', originalEnv);
+        restoreEnv('RAILRADAR_API_KEY', originalKey);
+        restoreEnv('AUTH_SECRET', originalAuth);
+        restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
+        delete process.env.PUBLIC_APP_URL;
       }
     });
   });
@@ -908,6 +996,236 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       assert.ok(verified, 'Valid ES256 token with registered kid must verify');
       assert.equal(verified.id, 'user_es256_success');
       clearJwksCache();
+    });
+
+    it('clock advancement past cache TTL triggers fresh fetch without sleeps', async () => {
+      clearJwksCache();
+      let simulatedTime = 1000000;
+      setJwksClockForTesting(() => simulatedTime);
+
+      const { publicKey: k1 } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const jwk1 = k1.export({ format: 'jwk' });
+      jwk1.kid = 'k-sim-1';
+      jwk1.alg = 'ES256';
+
+      let fetchCount = 0;
+      setJwksFetchForTesting((async () => {
+        fetchCount++;
+        return new Response(JSON.stringify({ keys: [jwk1] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as any);
+
+      process.env.SUPABASE_JWKS_URL = 'https://example.supabase.co/auth/v1/.well-known/jwks.json';
+
+      // 1. Initial fetch at T=0
+      await loadJwksIfNeeded('k-sim-1');
+      assert.equal(fetchCount, 1);
+      assert.ok(getTrustedKeyRecord('k-sim-1'));
+
+      // 2. Query again within TTL (advance 5 minutes): Cache is fresh, no fetch triggered
+      simulatedTime += 5 * 60 * 1000;
+      await loadJwksIfNeeded('k-sim-1');
+      assert.equal(fetchCount, 1, 'Cache must be reused within TTL window');
+
+      // 3. Advance clock past 10-minute TTL (advance 6 more minutes, total 11m)
+      simulatedTime += 6 * 60 * 1000;
+      await loadJwksIfNeeded('k-sim-1');
+      assert.equal(fetchCount, 2, 'Fresh fetch must be triggered once TTL expires');
+
+      clearJwksCache();
+      delete process.env.SUPABASE_JWKS_URL;
+    });
+
+    it('concurrent requests deduplicate and share in-flight fetch without race conditions', async () => {
+      clearJwksCache();
+      let simulatedTime = 2000000;
+      setJwksClockForTesting(() => simulatedTime);
+
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const jwk = publicKey.export({ format: 'jwk' });
+      jwk.kid = 'concurrent-key';
+      jwk.alg = 'ES256';
+
+      let fetchCount = 0;
+      setJwksFetchForTesting((async () => {
+        fetchCount++;
+        // Simulate slight async network delay
+        await new Promise((r) => setTimeout(r, 10));
+        return new Response(JSON.stringify({ keys: [jwk] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as any);
+
+      process.env.SUPABASE_JWKS_URL = 'https://example.supabase.co/auth/v1/.well-known/jwks.json';
+
+      // Fire 5 concurrent requests simultaneously
+      const results = await Promise.all([
+        loadJwksIfNeeded('concurrent-key'),
+        loadJwksIfNeeded('concurrent-key'),
+        loadJwksIfNeeded('concurrent-key'),
+        loadJwksIfNeeded('concurrent-key'),
+        loadJwksIfNeeded('concurrent-key'),
+      ]);
+
+      assert.equal(fetchCount, 1, 'Concurrent requests must share a single in-flight fetch');
+      assert.ok(getTrustedKeyRecord('concurrent-key'));
+
+      clearJwksCache();
+      delete process.env.SUPABASE_JWKS_URL;
+    });
+
+    it('throttles rapid fetch attempts when remote endpoint was just queried', async () => {
+      clearJwksCache();
+      let simulatedTime = 3000000;
+      setJwksClockForTesting(() => simulatedTime);
+
+      let fetchCount = 0;
+      setJwksFetchForTesting((async () => {
+        fetchCount++;
+        return new Response(JSON.stringify({ keys: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as any);
+
+      process.env.SUPABASE_JWKS_URL = 'https://example.supabase.co/auth/v1/.well-known/jwks.json';
+
+      // First attempt triggers fetch
+      await loadJwksIfNeeded('unknown-key');
+      assert.equal(fetchCount, 1);
+
+      // Immediate subsequent attempt within throttle window (10s later < 30s)
+      simulatedTime += 10 * 1000;
+      await loadJwksIfNeeded('unknown-key');
+      assert.equal(fetchCount, 1, 'Subsequent fetch within throttle interval must be suppressed');
+
+      // Attempt after throttle window (35s later > 30s)
+      simulatedTime += 25 * 1000;
+      await loadJwksIfNeeded('unknown-key');
+      assert.equal(fetchCount, 2, 'Fetch after throttle interval has passed must be permitted');
+
+      clearJwksCache();
+      delete process.env.SUPABASE_JWKS_URL;
+    });
+
+    it('stale-key grace period allows verification during temporary network outage', async () => {
+      clearJwksCache();
+      let simulatedTime = 4000000;
+      setJwksClockForTesting(() => simulatedTime);
+
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const jwk = publicKey.export({ format: 'jwk' });
+      jwk.kid = 'stale-grace-key';
+      jwk.alg = 'ES256';
+
+      setTrustedJwks({ keys: [jwk] });
+      assert.ok(getTrustedKeyRecord('stale-grace-key'));
+
+      // Advance clock past 10m TTL, but within 10m stale grace (at 15 minutes)
+      simulatedTime += 15 * 60 * 1000;
+
+      // Mock remote endpoint failure
+      setJwksFetchForTesting((async () => {
+        throw new Error('Network timeout');
+      }) as any);
+      process.env.SUPABASE_JWKS_URL = 'https://example.supabase.co/auth/v1/.well-known/jwks.json';
+
+      // Request occurs: TTL expired so it attempts fetch, fetch fails, but stale grace is active
+      await loadJwksIfNeeded('stale-grace-key');
+      const keyRecord = getTrustedKeyRecord('stale-grace-key');
+      assert.ok(keyRecord, 'Key must be retained and returned during stale grace period');
+
+      clearJwksCache();
+      delete process.env.SUPABASE_JWKS_URL;
+    });
+
+    it('stale-key grace expiration purges keys and fails closed when outage persists', async () => {
+      clearJwksCache();
+      let simulatedTime = 5000000;
+      setJwksClockForTesting(() => simulatedTime);
+
+      const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const jwk = publicKey.export({ format: 'jwk' });
+      jwk.kid = 'expired-grace-key';
+      jwk.alg = 'ES256';
+
+      setTrustedJwks({ keys: [jwk] });
+
+      // Advance clock beyond TTL (10m) + stale grace (10m) + 1 second (total 21m)
+      simulatedTime += 21 * 60 * 1000;
+
+      // Fetch fails
+      setJwksFetchForTesting((async () => {
+        throw new Error('Supabase outage');
+      }) as any);
+      process.env.SUPABASE_JWKS_URL = 'https://example.supabase.co/auth/v1/.well-known/jwks.json';
+
+      await loadJwksIfNeeded('expired-grace-key');
+      const keyRecord = getTrustedKeyRecord('expired-grace-key');
+      assert.equal(keyRecord, null, 'Key must be purged and null returned once stale grace expires');
+
+      clearJwksCache();
+      delete process.env.SUPABASE_JWKS_URL;
+    });
+
+    it('rejects JWKS payload exceeding maximum allowed bytes (256 KB)', async () => {
+      clearJwksCache();
+      const largePayload = JSON.stringify({
+        keys: [],
+        extra: 'X'.repeat(MAX_JWKS_PAYLOAD_BYTES + 1024),
+      });
+
+      setJwksFetchForTesting((async () => {
+        return new Response(largePayload, {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            'content-length': String(Buffer.byteLength(largePayload)),
+          },
+        });
+      }) as any);
+
+      process.env.SUPABASE_JWKS_URL = 'https://example.supabase.co/auth/v1/.well-known/jwks.json';
+
+      await loadJwksIfNeeded('oversized-key');
+      assert.equal(getTrustedKeyRecord('oversized-key'), null, 'Oversized JWKS payload must be rejected');
+
+      clearJwksCache();
+      delete process.env.SUPABASE_JWKS_URL;
+    });
+
+    it('rejects JWKS response exceeding maximum allowed key count (20 keys)', async () => {
+      clearJwksCache();
+      const keys = [];
+      for (let i = 0; i < MAX_JWKS_KEY_COUNT + 5; i++) {
+        keys.push({
+          kty: 'EC',
+          crv: 'P-256',
+          alg: 'ES256',
+          use: 'sig',
+          kid: `key-overflow-${i}`,
+          x: 'test',
+          y: 'test',
+        });
+      }
+
+      setJwksFetchForTesting((async () => {
+        return new Response(JSON.stringify({ keys }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as any);
+
+      process.env.SUPABASE_JWKS_URL = 'https://example.supabase.co/auth/v1/.well-known/jwks.json';
+
+      await loadJwksIfNeeded('key-overflow-0');
+      assert.equal(getTrustedKeyRecord('key-overflow-0'), null, 'JWKS exceeding max key count must be rejected');
+
+      clearJwksCache();
+      delete process.env.SUPABASE_JWKS_URL;
     });
   });
 

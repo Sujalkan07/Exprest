@@ -211,6 +211,20 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
     });
   });
 
+  app.setNotFoundHandler((req, reply) => {
+    return reply.status(404).send({
+      error: {
+        code: 'NOT_FOUND',
+        message: 'The requested resource was not found.',
+        retryable: false,
+      },
+      meta: {
+        requestId: req.id,
+        generatedAt: new Date().toISOString(),
+      },
+    });
+  });
+
   await registerRoutes(app);
 
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -218,7 +232,38 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
   return app;
 }
 
+export interface StartupDiagnostics {
+  nodeEnv: string;
+  trustProxy: boolean | number | string | string[];
+  hasRailRadarApiKey: boolean;
+  hasAuthSecret: boolean;
+  authSecretLength: number;
+  hasSupabaseJwtSecret: boolean;
+  supabaseIssuer: string | undefined;
+  corsOriginsCount: number;
+  publicAppUrl: string | undefined;
+}
+
+export function getStartupDiagnostics(): StartupDiagnostics {
+  const authSecret = process.env.AUTH_SECRET || '';
+  const origins = getCorsAllowedOrigins();
+  return {
+    nodeEnv: process.env.NODE_ENV || 'development',
+    trustProxy: resolveTrustProxy(),
+    hasRailRadarApiKey: Boolean(process.env.RAILRADAR_API_KEY && process.env.RAILRADAR_API_KEY.trim() !== ''),
+    hasAuthSecret: Boolean(authSecret && authSecret !== 'dev_secret_change_in_prod'),
+    authSecretLength: authSecret ? authSecret.length : 0,
+    hasSupabaseJwtSecret: Boolean(process.env.SUPABASE_JWT_SECRET && process.env.SUPABASE_JWT_SECRET.trim() !== ''),
+    supabaseIssuer: getExpectedIssuer(),
+    corsOriginsCount: origins.length,
+    publicAppUrl: process.env.PUBLIC_APP_URL,
+  };
+}
+
 export function validateStartupEnvironment() {
+  // Validate proxy configuration early so invalid TRUST_PROXY throws on startup
+  resolveTrustProxy();
+
   if (process.env.NODE_ENV === 'production') {
     if (!process.env.RAILRADAR_API_KEY) {
       throw new Error(
@@ -247,6 +292,31 @@ export function validateStartupEnvironment() {
         'Production JWT verification requires a resolvable Supabase issuer to protect against token spoofing.'
       );
     }
+
+    // Validate URL formats in production
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (supabaseUrl && supabaseUrl.trim() !== '') {
+      try {
+        const parsed = new URL(supabaseUrl.trim());
+        if (parsed.protocol !== 'https:' && !parsed.hostname.includes('localhost') && parsed.hostname !== '127.0.0.1') {
+          throw new Error('SUPABASE_URL must use https:// protocol in production.');
+        }
+      } catch (e: any) {
+        throw new Error(`Configuration error: Invalid SUPABASE_URL "${supabaseUrl}". ${e.message}`);
+      }
+    }
+
+    const publicAppUrl = process.env.PUBLIC_APP_URL;
+    if (publicAppUrl && publicAppUrl.trim() !== '') {
+      try {
+        const parsed = new URL(publicAppUrl.trim());
+        if (parsed.protocol !== 'https:' && !parsed.hostname.includes('localhost') && parsed.hostname !== '127.0.0.1') {
+          throw new Error('PUBLIC_APP_URL must use https:// protocol in production.');
+        }
+      } catch (e: any) {
+        throw new Error(`Configuration error: Invalid PUBLIC_APP_URL "${publicAppUrl}". ${e.message}`);
+      }
+    }
   } else {
     if (!process.env.RAILRADAR_API_KEY) {
       console.warn(
@@ -260,6 +330,14 @@ export function validateStartupEnvironment() {
 async function main() {
   // Strict startup environment validation (P0 Production Security)
   validateStartupEnvironment();
+
+  const diag = getStartupDiagnostics();
+  console.log(
+    `[Startup Diagnostics] Environment: ${diag.nodeEnv}, ` +
+    `TrustProxy: ${JSON.stringify(diag.trustProxy)}, ` +
+    `Issuer: ${diag.supabaseIssuer || 'none'}, ` +
+    `CORS Origins: ${diag.corsOriginsCount}`
+  );
 
   const app = await buildApp();
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;

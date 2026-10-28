@@ -68,14 +68,33 @@ interface JwkRecord {
 export const DEFAULT_JWKS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 export const JWKS_FETCH_THROTTLE_MS = 30 * 1000; // 30 seconds
 export const JWKS_FETCH_TIMEOUT_MS = 5000; // 5 seconds
-export const MAX_STALE_GRACE_PERIOD_MS = 60 * 60 * 1000; // 1 hour
+export const MAX_STALE_GRACE_PERIOD_MS = 10 * 60 * 1000; // 10 minutes
+export const MAX_JWKS_PAYLOAD_BYTES = 256 * 1024; // 256 KB
+export const MAX_JWKS_KEY_COUNT = 20;
+
+/**
+ * Controllable clock function for deterministic testing without real-time sleeps.
+ */
+let getNow = (): number => Date.now();
+export function setJwksClockForTesting(fn: (() => number) | null): void {
+  getNow = fn || (() => Date.now());
+}
+
+/**
+ * Controllable fetch implementation for deterministic testing of JWKS HTTP requests.
+ */
+let customFetch: typeof fetch | null = null;
+export function setJwksFetchForTesting(fn: typeof fetch | null): void {
+  customFetch = fn;
+}
 
 /**
  * In-memory cache for trusted Supabase JWKS public keys.
  */
 let jwksCache = new Map<string, JwkRecord>();
-let lastJwksFetch = 0;
+let lastJwksFetchAttempt = 0;
 let jwksCacheExpiresAt = 0;
+let staleGraceExpiresAt = 0;
 let inFlightJwksFetch: Promise<void> | null = null;
 
 /**
@@ -118,17 +137,22 @@ export function setTrustedJwks(jwks: { keys: any[] }): void {
   for (const [kid, record] of parsed) {
     jwksCache.set(kid, record);
   }
-  jwksCacheExpiresAt = Date.now() + DEFAULT_JWKS_CACHE_TTL_MS;
+  const now = getNow();
+  jwksCacheExpiresAt = now + DEFAULT_JWKS_CACHE_TTL_MS;
+  staleGraceExpiresAt = jwksCacheExpiresAt + MAX_STALE_GRACE_PERIOD_MS;
 }
 
 /**
- * Clears the trusted JWKS cache (used primarily in test suites).
+ * Clears the trusted JWKS cache and resets state (used in test suites).
  */
 export function clearJwksCache(): void {
   jwksCache.clear();
-  lastJwksFetch = 0;
+  lastJwksFetchAttempt = 0;
   jwksCacheExpiresAt = 0;
+  staleGraceExpiresAt = 0;
   inFlightJwksFetch = null;
+  customFetch = null;
+  getNow = () => Date.now();
 }
 
 export function getJwksCacheSize(): number {
@@ -139,16 +163,40 @@ export function getJwksCacheExpiresAt(): number {
   return jwksCacheExpiresAt;
 }
 
+export function getStaleGraceExpiresAt(): number {
+  return staleGraceExpiresAt;
+}
+
+export function getLastJwksFetchAttempt(): number {
+  return lastJwksFetchAttempt;
+}
+
+/**
+ * Retrieves a trusted key record by kid, enforcing cache expiration and bounded stale grace.
+ * Returns null if key is not found or if stale grace period has elapsed (fail closed).
+ */
+export function getTrustedKeyRecord(kid: string): JwkRecord | null {
+  const record = jwksCache.get(kid);
+  if (!record) return null;
+  const now = getNow();
+  if (staleGraceExpiresAt > 0 && now > staleGraceExpiresAt) {
+    // Stale grace period expired: evict stale key and fail closed
+    jwksCache.delete(kid);
+    return null;
+  }
+  return record;
+}
+
 /**
  * Loads JWKS from environment or remote Supabase JWKS endpoint if not already cached.
  */
 export async function loadJwksIfNeeded(kid?: string): Promise<void> {
-  const now = Date.now();
-  const isCacheExpired = now >= jwksCacheExpiresAt;
-  const isKeyMissing = kid ? !jwksCache.has(kid) : jwksCache.size === 0;
+  const now = getNow();
+  const isCacheFresh = now < jwksCacheExpiresAt;
+  const isKeyPresent = kid ? jwksCache.has(kid) : jwksCache.size > 0;
 
   // 1. If cache is fresh and key is present, return immediately
-  if (!isCacheExpired && !isKeyMissing) {
+  if (isCacheFresh && isKeyPresent) {
     return;
   }
 
@@ -162,13 +210,22 @@ export async function loadJwksIfNeeded(kid?: string): Promise<void> {
     } catch {
       // Ignore malformed SUPABASE_JWKS string
     }
-    if (kid && jwksCache.has(kid) && !isCacheExpired) {
+    if (kid && jwksCache.has(kid) && getNow() < jwksCacheExpiresAt) {
       return;
     }
   }
 
-  // 3. Throttle remote JWKS network calls to prevent request storms
-  if (now - lastJwksFetch < JWKS_FETCH_THROTTLE_MS) {
+  // 3. Concurrency deduplication: If a remote fetch is already in flight, await it first!
+  // This prevents concurrent requests from being erroneously throttled or seeing stale state.
+  if (inFlightJwksFetch) {
+    await inFlightJwksFetch;
+    if (getNow() < jwksCacheExpiresAt && (kid ? jwksCache.has(kid) : jwksCache.size > 0)) {
+      return;
+    }
+  }
+
+  // 4. Throttle remote JWKS network calls to prevent request storms
+  if (now - lastJwksFetchAttempt < JWKS_FETCH_THROTTLE_MS) {
     return;
   }
 
@@ -181,30 +238,50 @@ export async function loadJwksIfNeeded(kid?: string): Promise<void> {
     return;
   }
 
-  // Deduplicate concurrent fetch requests
-  if (inFlightJwksFetch) {
-    return inFlightJwksFetch;
-  }
+  lastJwksFetchAttempt = getNow();
 
   inFlightJwksFetch = (async () => {
     try {
-      lastJwksFetch = Date.now();
-      const res = await fetch(jwksUrl, {
+      const fetchFn = customFetch || globalThis.fetch;
+      const res = await fetchFn(jwksUrl, {
         signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS),
         headers: { Accept: 'application/json' },
       });
-      if (res.ok) {
-        const data: any = await res.json();
-        const freshKeys = parseJwks(data);
-        if (freshKeys.size > 0) {
-          // Replace stale key set so retired/revoked keys stop being trusted
-          jwksCache = freshKeys;
-          jwksCacheExpiresAt = Date.now() + DEFAULT_JWKS_CACHE_TTL_MS;
-        }
+      if (!res.ok) {
+        throw new Error(`JWKS endpoint returned HTTP status ${res.status}`);
+      }
+
+      // Check Content-Length header if present
+      const contentLength = res.headers?.get ? res.headers.get('content-length') : null;
+      if (contentLength && parseInt(contentLength, 10) > MAX_JWKS_PAYLOAD_BYTES) {
+        throw new Error(`JWKS payload size ${contentLength} bytes exceeds limit ${MAX_JWKS_PAYLOAD_BYTES}`);
+      }
+
+      const text = await res.text();
+      if (Buffer.byteLength(text, 'utf-8') > MAX_JWKS_PAYLOAD_BYTES) {
+        throw new Error(`JWKS text size exceeds limit ${MAX_JWKS_PAYLOAD_BYTES}`);
+      }
+
+      const data: any = JSON.parse(text);
+      if (!data || !Array.isArray(data.keys)) {
+        throw new Error('JWKS response missing keys array');
+      }
+
+      if (data.keys.length > MAX_JWKS_KEY_COUNT) {
+        throw new Error(`JWKS key count ${data.keys.length} exceeds limit ${MAX_JWKS_KEY_COUNT}`);
+      }
+
+      const freshKeys = parseJwks(data);
+      if (freshKeys.size > 0) {
+        // Complete replacement on rotation so retired keys are purged immediately
+        jwksCache = freshKeys;
+        const fetchNow = getNow();
+        jwksCacheExpiresAt = fetchNow + DEFAULT_JWKS_CACHE_TTL_MS;
+        staleGraceExpiresAt = jwksCacheExpiresAt + MAX_STALE_GRACE_PERIOD_MS;
       }
     } catch {
-      // Network failure: if cache exceeded max stale grace period, purge it
-      if (now - (jwksCacheExpiresAt - DEFAULT_JWKS_CACHE_TTL_MS) > MAX_STALE_GRACE_PERIOD_MS) {
+      // Network or parsing failure: if current time is past stale grace period, purge cache
+      if (getNow() > staleGraceExpiresAt) {
         jwksCache.clear();
       }
     } finally {
@@ -212,7 +289,7 @@ export async function loadJwksIfNeeded(kid?: string): Promise<void> {
     }
   })();
 
-  return inFlightJwksFetch;
+  await inFlightJwksFetch;
 }
 
 /**
@@ -314,7 +391,7 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
       }
       await loadJwksIfNeeded(kid.trim());
 
-      const keyRecord = jwksCache.get(kid.trim());
+      const keyRecord = getTrustedKeyRecord(kid.trim());
       if (!keyRecord || keyRecord.alg !== 'ES256') {
         return null;
       }
