@@ -9,23 +9,32 @@ const apiBaseOrigin = (() => {
   }
 })();
 
-const connectSources = [
-  "'self'",
-  'https://*.supabase.co',
-  'wss://*.supabase.co',
-  'https://api.maptiler.com',
-  'https://*.onrender.com',
-  'https://exprest.onrender.com',
-  'https://*.vercel.app',
-  'http://localhost:4000',
-  'http://127.0.0.1:4000',
-  'http://localhost:3000',
-];
+const isProd = process.env.NODE_ENV === 'production';
+
+const connectSources = isProd
+  ? [
+      "'self'",
+      'https://*.supabase.co',
+      'wss://*.supabase.co',
+      'https://api.maptiler.com',
+      'https://exprest.onrender.com',
+      'https://exprest.vercel.app',
+    ]
+  : [
+      "'self'",
+      'https://*.supabase.co',
+      'wss://*.supabase.co',
+      'https://api.maptiler.com',
+      'https://exprest.onrender.com',
+      'http://localhost:4000',
+      'http://127.0.0.1:4000',
+      'http://localhost:3000',
+    ];
+
 if (apiBaseOrigin && !connectSources.includes(apiBaseOrigin)) {
   connectSources.push(apiBaseOrigin);
 }
 
-const isProd = process.env.NODE_ENV === 'production';
 const scriptSrc = isProd ? "'self' 'unsafe-inline'" : "'self' 'unsafe-eval' 'unsafe-inline'";
 
 const cspHeader = `
@@ -33,7 +42,7 @@ const cspHeader = `
   script-src ${scriptSrc};
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' https://fonts.gstatic.com data:;
-  img-src 'self' data: blob: https:;
+  img-src 'self' data: blob: https://api.maptiler.com;
   connect-src ${connectSources.join(' ')};
   worker-src 'self' blob:;
   child-src 'self' blob:;

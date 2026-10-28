@@ -65,33 +65,60 @@ interface JwkRecord {
   crv?: string;
 }
 
+export const DEFAULT_JWKS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+export const JWKS_FETCH_THROTTLE_MS = 30 * 1000; // 30 seconds
+export const JWKS_FETCH_TIMEOUT_MS = 5000; // 5 seconds
+export const MAX_STALE_GRACE_PERIOD_MS = 60 * 60 * 1000; // 1 hour
+
 /**
  * In-memory cache for trusted Supabase JWKS public keys.
  */
-const jwksCache = new Map<string, JwkRecord>();
+let jwksCache = new Map<string, JwkRecord>();
 let lastJwksFetch = 0;
+let jwksCacheExpiresAt = 0;
+let inFlightJwksFetch: Promise<void> | null = null;
+
+/**
+ * Validates and parses raw JWKS key entries into validated JwkRecords.
+ * Enforces EC P-256 curve, ES256 algorithm, signature use, and non-empty kid.
+ */
+export function parseJwks(data: { keys: any[] }): Map<string, JwkRecord> {
+  const result = new Map<string, JwkRecord>();
+  if (!data || !Array.isArray(data.keys)) return result;
+
+  for (const jwk of data.keys) {
+    if (!jwk || typeof jwk !== 'object') continue;
+    if (jwk.kty !== 'EC') continue;
+    if (jwk.crv !== 'P-256' && jwk.crv !== 'prime256v1') continue;
+    if (jwk.alg && jwk.alg !== 'ES256') continue;
+    if (jwk.use && jwk.use !== 'sig') continue;
+    const kid = jwk.kid;
+    if (!kid || typeof kid !== 'string' || kid.trim() === '') continue;
+
+    try {
+      const keyObj = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+      result.set(kid.trim(), {
+        keyObject: keyObj,
+        alg: 'ES256',
+        crv: jwk.crv,
+      });
+    } catch {
+      // Ignore individual invalid JWK
+    }
+  }
+  return result;
+}
 
 /**
  * Registers trusted JWKS keys into the in-memory cache.
  * Accepts standard JWKS payload: { keys: JwkEntry[] }.
  */
 export function setTrustedJwks(jwks: { keys: any[] }): void {
-  if (!jwks || !Array.isArray(jwks.keys)) return;
-  for (const jwk of jwks.keys) {
-    if (jwk.kty === 'EC' && (jwk.crv === 'P-256' || jwk.crv === 'prime256v1')) {
-      try {
-        const keyObj = crypto.createPublicKey({ key: jwk, format: 'jwk' });
-        const kid = jwk.kid || SUPABASE_CURRENT_ECC_KEY_ID;
-        jwksCache.set(kid, {
-          keyObject: keyObj,
-          alg: jwk.alg || 'ES256',
-          crv: jwk.crv,
-        });
-      } catch {
-        // Ignore unparseable individual JWK
-      }
-    }
+  const parsed = parseJwks(jwks);
+  for (const [kid, record] of parsed) {
+    jwksCache.set(kid, record);
   }
+  jwksCacheExpiresAt = Date.now() + DEFAULT_JWKS_CACHE_TTL_MS;
 }
 
 /**
@@ -100,13 +127,32 @@ export function setTrustedJwks(jwks: { keys: any[] }): void {
 export function clearJwksCache(): void {
   jwksCache.clear();
   lastJwksFetch = 0;
+  jwksCacheExpiresAt = 0;
+  inFlightJwksFetch = null;
+}
+
+export function getJwksCacheSize(): number {
+  return jwksCache.size;
+}
+
+export function getJwksCacheExpiresAt(): number {
+  return jwksCacheExpiresAt;
 }
 
 /**
  * Loads JWKS from environment or remote Supabase JWKS endpoint if not already cached.
  */
-async function loadJwksIfNeeded(kid?: string): Promise<void> {
-  // 1. Static JWKS provided via SUPABASE_JWKS environment variable (air-gapped / offline support)
+export async function loadJwksIfNeeded(kid?: string): Promise<void> {
+  const now = Date.now();
+  const isCacheExpired = now >= jwksCacheExpiresAt;
+  const isKeyMissing = kid ? !jwksCache.has(kid) : jwksCache.size === 0;
+
+  // 1. If cache is fresh and key is present, return immediately
+  if (!isCacheExpired && !isKeyMissing) {
+    return;
+  }
+
+  // 2. Static JWKS provided via SUPABASE_JWKS environment variable (air-gapped / offline support)
   if (process.env.SUPABASE_JWKS && jwksCache.size === 0) {
     try {
       const parsed = JSON.parse(process.env.SUPABASE_JWKS);
@@ -116,43 +162,57 @@ async function loadJwksIfNeeded(kid?: string): Promise<void> {
     } catch {
       // Ignore malformed SUPABASE_JWKS string
     }
+    if (kid && jwksCache.has(kid) && !isCacheExpired) {
+      return;
+    }
   }
 
-  // 2. If the requested kid is already cached, return immediately
-  if (kid && jwksCache.has(kid)) {
-    return;
-  }
-
-  // 3. Throttle remote JWKS network calls (at most once every 30 seconds)
-  const now = Date.now();
-  if (now - lastJwksFetch < 30_000) {
+  // 3. Throttle remote JWKS network calls to prevent request storms
+  if (now - lastJwksFetch < JWKS_FETCH_THROTTLE_MS) {
     return;
   }
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const jwksUrl =
     process.env.SUPABASE_JWKS_URL ||
-    (supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/auth/v1/.well-known/jwks.json` : null);
+    (supabaseUrl ? `${supabaseUrl.replace(/\/+$/, '')}/auth/v1/.well-known/jwks.json` : null);
 
   if (!jwksUrl) {
     return;
   }
 
-  try {
-    lastJwksFetch = now;
-    const res = await fetch(jwksUrl, {
-      signal: AbortSignal.timeout(5000),
-      headers: { Accept: 'application/json' },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data?.keys)) {
-        setTrustedJwks(data);
-      }
-    }
-  } catch {
-    // Graceful offline/network failure handling
+  // Deduplicate concurrent fetch requests
+  if (inFlightJwksFetch) {
+    return inFlightJwksFetch;
   }
+
+  inFlightJwksFetch = (async () => {
+    try {
+      lastJwksFetch = Date.now();
+      const res = await fetch(jwksUrl, {
+        signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS),
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const data: any = await res.json();
+        const freshKeys = parseJwks(data);
+        if (freshKeys.size > 0) {
+          // Replace stale key set so retired/revoked keys stop being trusted
+          jwksCache = freshKeys;
+          jwksCacheExpiresAt = Date.now() + DEFAULT_JWKS_CACHE_TTL_MS;
+        }
+      }
+    } catch {
+      // Network failure: if cache exceeded max stale grace period, purge it
+      if (now - (jwksCacheExpiresAt - DEFAULT_JWKS_CACHE_TTL_MS) > MAX_STALE_GRACE_PERIOD_MS) {
+        jwksCache.clear();
+      }
+    } finally {
+      inFlightJwksFetch = null;
+    }
+  })();
+
+  return inFlightJwksFetch;
 }
 
 /**
@@ -204,8 +264,8 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
       return null;
     }
 
-    // 4. Validate subject claim (user identity)
-    const userId = payload.sub || payload.id;
+    // 4. Validate subject claim (user identity) - strictly require genuine non-empty string sub
+    const userId = payload.sub;
     if (!userId || typeof userId !== 'string' || userId.trim() === '') {
       return null;
     }
@@ -227,14 +287,16 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
 
     // 6. Validate issuer (iss) claim
     const expectedIssuer = getExpectedIssuer();
+    if (process.env.NODE_ENV === 'production' && !expectedIssuer) {
+      // Fail closed: In production, issuer must be resolvable to prevent cross-tenant token bypasses
+      return null;
+    }
     if (expectedIssuer) {
-      if (payload.iss) {
-        const normalizedIss = String(payload.iss).trim().replace(/\/+$/, '');
-        if (normalizedIss !== expectedIssuer) {
-          return null;
-        }
-      } else if (process.env.NODE_ENV === 'production') {
-        // In production, when an expected issuer is configured, tokens must specify it
+      if (!payload.iss) {
+        return null;
+      }
+      const normalizedIss = String(payload.iss).trim().replace(/\/+$/, '');
+      if (normalizedIss !== expectedIssuer) {
         return null;
       }
     }
@@ -246,15 +308,13 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
     if (alg === 'ES256') {
       // Asymmetric verification via ECDSA P-256 public key from trusted JWKS
       const kid = header.kid;
-      await loadJwksIfNeeded(kid);
-
-      let keyRecord: JwkRecord | undefined;
-      if (kid) {
-        keyRecord = jwksCache.get(kid);
-      } else if (jwksCache.size === 1) {
-        keyRecord = jwksCache.values().next().value;
+      if (!kid || typeof kid !== 'string' || kid.trim() === '') {
+        // Strict: tokens signed with ES256 must identify key via valid kid
+        return null;
       }
+      await loadJwksIfNeeded(kid.trim());
 
+      const keyRecord = jwksCache.get(kid.trim());
       if (!keyRecord || keyRecord.alg !== 'ES256') {
         return null;
       }

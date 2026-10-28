@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyReply } from 'fastify';
 import crypto from 'crypto';
 import { TrainService } from '../modules/trains/TrainService.js';
 import { JourneyService } from '../modules/journeys/JourneyService.js';
@@ -61,12 +61,17 @@ export function resolvePublicAppUrl(originHeader?: string): string {
  * Sanitizes unexpected error messages for public client responses.
  * In production, returns a safe generic message to prevent leaking internal stack traces,
  * database errors, filesystem paths, upstream credentials, or connection details.
+ * 4xx client-safe errors preserve their messages; 5xx errors are sanitized.
  */
 export function toSafeErrorMessage(err: unknown, defaultMessage: string): string {
+  const isProd = process.env.NODE_ENV === 'production';
   if (err instanceof AppError) {
+    if (isProd && err.statusCode >= 500) {
+      return defaultMessage;
+    }
     return err.message;
   }
-  if (process.env.NODE_ENV === 'production') {
+  if (isProd) {
     return defaultMessage;
   }
   return err && typeof err === 'object' && 'message' in err && typeof (err as any).message === 'string'
@@ -84,6 +89,39 @@ export async function registerRoutes(fastify: FastifyInstance) {
     generatedAt: new Date().toISOString(),
   });
 
+  const sendSafeError = (
+    reply: FastifyReply,
+    reqId: string,
+    err: unknown,
+    fallbackCode: string,
+    fallbackMessage: string,
+    defaultStatus = 500,
+    retryable = false
+  ) => {
+    const isProd = process.env.NODE_ENV === 'production';
+    if (err instanceof AppError) {
+      if (isProd && err.statusCode >= 500) {
+        return reply.status(err.statusCode).send({
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: fallbackMessage,
+            retryable: false,
+          },
+          meta: makeMeta(reqId),
+        });
+      }
+      return reply.status(err.statusCode).send(err.toResponse(reqId));
+    }
+    return reply.status(defaultStatus).send({
+      error: {
+        code: fallbackCode,
+        message: toSafeErrorMessage(err, fallbackMessage),
+        retryable,
+      },
+      meta: makeMeta(reqId),
+    });
+  };
+
   // Attach optional authentication parsing to all incoming requests
   fastify.addHook('preHandler', parseOptionalAuth);
 
@@ -94,19 +132,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
       const items = await trainService.searchTrains(q || '');
       return { data: items, meta: makeMeta(req.id) };
     } catch (err: any) {
-      if (err instanceof AppError) {
-        reply.status(err.statusCode).send(err.toResponse(req.id));
-      } else {
-        req.log.error({ err, reqId: req.id }, 'Train search provider failure');
-        reply.status(500).send({
-          error: {
-            code: 'PROVIDER_TIMEOUT',
-            message: toSafeErrorMessage(err, 'Train search is temporarily unavailable.'),
-            retryable: true,
-          },
-          meta: makeMeta(req.id),
-        });
-      }
+      req.log.error({ err, reqId: req.id }, 'Train search provider failure');
+      sendSafeError(
+        reply,
+        req.id,
+        err,
+        'PROVIDER_TIMEOUT',
+        'Train search is temporarily unavailable.',
+        500,
+        true
+      );
     }
   });
 
@@ -117,15 +152,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
       const data = await journeyService.getJourneyDetails(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
-      if (err instanceof AppError) {
-        reply.status(err.statusCode).send(err.toResponse(req.id));
-      } else {
-        req.log.error({ err, reqId: req.id }, 'Journey details lookup failure');
-        reply.status(500).send({
-          error: { code: 'RUN_NOT_FOUND', message: 'Journey not found.', retryable: false },
-          meta: makeMeta(req.id),
-        });
-      }
+      req.log.error({ err, reqId: req.id }, 'Journey details lookup failure');
+      sendSafeError(
+        reply,
+        req.id,
+        err,
+        'RUN_NOT_FOUND',
+        'Journey details are temporarily unavailable.',
+        500,
+        false
+      );
     }
   });
 
@@ -136,19 +172,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
       const data = await journeyService.getLiveStatus(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
-      if (err instanceof AppError) {
-        reply.status(err.statusCode).send(err.toResponse(req.id));
-      } else {
-        req.log.error({ err, reqId: req.id }, 'Live journey lookup failure');
-        reply.status(404).send({
-          error: {
-            code: 'LIVE_NOT_FOUND',
-            message: toSafeErrorMessage(err, 'No live data found.'),
-            retryable: false,
-          },
-          meta: makeMeta(req.id),
-        });
-      }
+      req.log.error({ err, reqId: req.id }, 'Live journey lookup failure');
+      sendSafeError(
+        reply,
+        req.id,
+        err,
+        'PROVIDER_UNAVAILABLE',
+        'Live journey tracking is temporarily unavailable.',
+        500,
+        false
+      );
     }
   });
 
@@ -249,19 +282,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
       const data = await journeyService.getAnalytics(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
-      if (err instanceof AppError) {
-        reply.status(err.statusCode).send(err.toResponse(req.id));
-      } else {
-        req.log.error({ err, reqId: req.id }, 'Journey analytics lookup failure');
-        reply.status(500).send({
-          error: {
-            code: 'RUN_NOT_FOUND',
-            message: toSafeErrorMessage(err, 'Analytics unavailable.'),
-            retryable: false,
-          },
-          meta: makeMeta(req.id),
-        });
-      }
+      req.log.error({ err, reqId: req.id }, 'Journey analytics lookup failure');
+      sendSafeError(
+        reply,
+        req.id,
+        err,
+        'RUN_NOT_FOUND',
+        'Analytics unavailable.',
+        500,
+        false
+      );
     }
   });
 
@@ -272,19 +302,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
       const data = await journeyService.getWeather(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
-      if (err instanceof AppError) {
-        reply.status(err.statusCode).send(err.toResponse(req.id));
-      } else {
-        req.log.error({ err, reqId: req.id }, 'Journey weather lookup failure');
-        reply.status(500).send({
-          error: {
-            code: 'WEATHER_UNAVAILABLE',
-            message: toSafeErrorMessage(err, 'Weather unavailable.'),
-            retryable: true,
-          },
-          meta: makeMeta(req.id),
-        });
-      }
+      req.log.error({ err, reqId: req.id }, 'Journey weather lookup failure');
+      sendSafeError(
+        reply,
+        req.id,
+        err,
+        'WEATHER_UNAVAILABLE',
+        'Weather unavailable.',
+        500,
+        true
+      );
     }
   });
 
@@ -296,19 +323,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
       const data = await journeyService.getPois(journeyId, category);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
-      if (err instanceof AppError) {
-        reply.status(err.statusCode).send(err.toResponse(req.id));
-      } else {
-        req.log.error({ err, reqId: req.id }, 'Journey POI lookup failure');
-        reply.status(500).send({
-          error: {
-            code: 'POI_UNAVAILABLE',
-            message: toSafeErrorMessage(err, 'POIs unavailable.'),
-            retryable: true,
-          },
-          meta: makeMeta(req.id),
-        });
-      }
+      req.log.error({ err, reqId: req.id }, 'Journey POI lookup failure');
+      sendSafeError(
+        reply,
+        req.id,
+        err,
+        'POI_UNAVAILABLE',
+        'POIs unavailable.',
+        500,
+        true
+      );
     }
   });
 
@@ -482,14 +506,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
       const data = await journeyService.getJourneyDetails(journeyId);
       return { data, meta: makeMeta(req.id) };
     } catch (err: any) {
-      if (err instanceof AppError) {
-        reply.status(err.statusCode).send(err.toResponse(req.id));
-      } else {
-        reply.status(404).send({
-          error: { code: 'RUN_NOT_FOUND', message: 'Shared journey not found.', retryable: false },
-          meta: makeMeta(req.id),
-        });
-      }
+      req.log.error({ err, reqId: req.id }, 'Shared journey details lookup failure');
+      sendSafeError(
+        reply,
+        req.id,
+        err,
+        'RUN_NOT_FOUND',
+        'Shared journey details are temporarily unavailable.',
+        500,
+        false
+      );
     }
   });
 
@@ -510,19 +536,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
         const data = await pnrService.getPnrStatus(pnr);
         return { data, meta: makeMeta(req.id) };
       } catch (err: any) {
-        if (err instanceof AppError) {
-          reply.status(err.statusCode).send(err.toResponse(req.id));
-        } else {
-          req.log.error({ err, reqId: req.id }, 'PNR lookup failure');
-          reply.status(500).send({
-            error: {
-              code: 'PROVIDER_TIMEOUT',
-              message: toSafeErrorMessage(err, 'PNR status lookup failed.'),
-              retryable: true,
-            },
-            meta: makeMeta(req.id),
-          });
-        }
+        req.log.error({ err, reqId: req.id }, 'PNR lookup failure');
+        sendSafeError(
+          reply,
+          req.id,
+          err,
+          'PROVIDER_TIMEOUT',
+          'PNR status lookup failed.',
+          500,
+          true
+        );
       }
     }
   );
@@ -555,19 +578,16 @@ export async function registerRoutes(fastify: FastifyInstance) {
         );
         return { data, meta: makeMeta(req.id) };
       } catch (err: any) {
-        if (err instanceof AppError) {
-          reply.status(err.statusCode).send(err.toResponse(req.id));
-        } else {
-          req.log.error({ err, reqId: req.id }, 'Train fare lookup failure');
-          reply.status(500).send({
-            error: {
-              code: 'PROVIDER_TIMEOUT',
-              message: toSafeErrorMessage(err, 'Train fare lookup failed.'),
-              retryable: true,
-            },
-            meta: makeMeta(req.id),
-          });
-        }
+        req.log.error({ err, reqId: req.id }, 'Train fare lookup failure');
+        sendSafeError(
+          reply,
+          req.id,
+          err,
+          'PROVIDER_TIMEOUT',
+          'Train fare lookup failed.',
+          500,
+          true
+        );
       }
     }
   );

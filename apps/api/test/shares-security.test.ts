@@ -163,9 +163,11 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
     const originalEnv = process.env.NODE_ENV;
     const originalSecret = process.env.AUTH_SECRET;
     const originalJwtSecret = process.env.SUPABASE_JWT_SECRET;
+    const originalSupabaseUrl = process.env.SUPABASE_URL;
 
     try {
       process.env.NODE_ENV = 'production';
+      process.env.SUPABASE_URL = 'https://example.supabase.co';
       process.env.SUPABASE_JWT_SECRET = 'valid_production_supabase_jwt_secret_test_123';
       process.env.AUTH_SECRET = 'dev_secret_change_in_prod'; // Weak / default secret
 
@@ -190,6 +192,7 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
       restoreEnv('NODE_ENV', originalEnv);
       restoreEnv('AUTH_SECRET', originalSecret);
       restoreEnv('SUPABASE_JWT_SECRET', originalJwtSecret);
+      restoreEnv('SUPABASE_URL', originalSupabaseUrl);
     }
   });
 
@@ -219,10 +222,14 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
     const originalEnv = process.env.NODE_ENV;
     const originalSecret = process.env.AUTH_SECRET;
     const originalKey = process.env.RAILRADAR_API_KEY;
+    const originalJwtSecret = process.env.SUPABASE_JWT_SECRET;
+    const originalSupabaseUrl = process.env.SUPABASE_URL;
 
     try {
       process.env.NODE_ENV = 'production';
       process.env.RAILRADAR_API_KEY = 'test_key';
+      process.env.SUPABASE_URL = 'https://example.supabase.co';
+      process.env.SUPABASE_JWT_SECRET = 'valid_production_supabase_jwt_secret_test_123';
 
       // Missing AUTH_SECRET
       delete process.env.AUTH_SECRET;
@@ -243,6 +250,8 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
       process.env.NODE_ENV = originalEnv;
       process.env.AUTH_SECRET = originalSecret;
       process.env.RAILRADAR_API_KEY = originalKey;
+      process.env.SUPABASE_JWT_SECRET = originalJwtSecret;
+      process.env.SUPABASE_URL = originalSupabaseUrl;
     }
   });
 

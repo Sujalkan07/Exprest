@@ -2,7 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import Fastify from 'fastify';
-import { buildApp, resolveTrustProxy, validateStartupEnvironment } from '../src/app.js';
+import {
+  buildApp,
+  resolveTrustProxy,
+  validateStartupEnvironment,
+  cleanSensitiveLogText,
+  errorLogSerializer,
+} from '../src/app.js';
 import { resolvePublicAppUrl, toSafeErrorMessage } from '../src/routes/index.js';
 import { AppError } from '../src/common/errors/AppError.js';
 import {
@@ -12,6 +18,12 @@ import {
   getExpectedIssuer,
   getSupabaseJwtSecret,
   clearJwksCache,
+  parseJwks,
+  setTrustedJwks,
+  getJwksCacheExpiresAt,
+  getJwksCacheSize,
+  DEFAULT_JWKS_CACHE_TTL_MS,
+  SUPABASE_CURRENT_ECC_KEY_ID,
   SUPABASE_PREVIOUS_HS256_KEY_ID,
 } from '../src/common/middleware/auth.js';
 import { getCorsAllowedOrigins, normalizeOrigin } from '../src/cors.js';
@@ -43,27 +55,36 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       }
     });
 
-    it('defaults to true (trust proxy hops) in production when TRUST_PROXY is unset', () => {
+    it('defaults to 1 (numeric hop) in production when TRUST_PROXY is unset', () => {
       try {
         delete process.env.TRUST_PROXY;
         process.env.NODE_ENV = 'production';
-        assert.equal(resolveTrustProxy(), true);
+        const proxyVal = resolveTrustProxy();
+        assert.equal(proxyVal, 1);
+        assert.equal(typeof proxyVal, 'number', 'Unset TRUST_PROXY in production must resolve to a number (1), not a boolean (true)');
       } finally {
         restoreEnv('TRUST_PROXY', originalTrustProxy);
         restoreEnv('NODE_ENV', originalNodeEnv);
       }
     });
 
-    it('honors explicit boolean-like strings for TRUST_PROXY', () => {
+    it('honors explicit numeric hop counts and boolean strings for TRUST_PROXY', () => {
       try {
+        process.env.TRUST_PROXY = '1';
+        assert.equal(resolveTrustProxy(), 1);
+        assert.equal(typeof resolveTrustProxy(), 'number');
+
+        process.env.TRUST_PROXY = '2';
+        assert.equal(resolveTrustProxy(), 2);
+        assert.equal(typeof resolveTrustProxy(), 'number');
+
         process.env.TRUST_PROXY = 'true';
         assert.equal(resolveTrustProxy(), true);
-
-        process.env.TRUST_PROXY = '1';
-        assert.equal(resolveTrustProxy(), true);
+        assert.equal(typeof resolveTrustProxy(), 'boolean');
 
         process.env.TRUST_PROXY = 'false';
         assert.equal(resolveTrustProxy(), false);
+        assert.equal(typeof resolveTrustProxy(), 'boolean');
 
         process.env.TRUST_PROXY = '0';
         assert.equal(resolveTrustProxy(), false);
@@ -73,17 +94,82 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       }
     });
 
-    it('honors IP and subnet values or comma-separated lists for TRUST_PROXY', () => {
+    it('honors valid IP and subnet values or comma-separated lists for TRUST_PROXY', () => {
       try {
         process.env.TRUST_PROXY = '127.0.0.1';
         assert.equal(resolveTrustProxy(), '127.0.0.1');
 
         process.env.TRUST_PROXY = '10.0.0.1, 10.0.0.2';
         assert.deepEqual(resolveTrustProxy(), ['10.0.0.1', '10.0.0.2']);
+
+        process.env.TRUST_PROXY = '10.0.0.0/8';
+        assert.equal(resolveTrustProxy(), '10.0.0.0/8');
+
+        process.env.TRUST_PROXY = 'loopback, linklocal';
+        assert.deepEqual(resolveTrustProxy(), ['loopback', 'linklocal']);
       } finally {
         restoreEnv('TRUST_PROXY', originalTrustProxy);
         restoreEnv('NODE_ENV', originalNodeEnv);
       }
+    });
+
+    it('rejects malformed or invalid TRUST_PROXY configuration values with descriptive error', () => {
+      try {
+        process.env.TRUST_PROXY = 'invalid_val';
+        assert.throws(() => resolveTrustProxy(), /Invalid TRUST_PROXY/);
+
+        process.env.TRUST_PROXY = '10.0.0.1, , 999.999';
+        assert.throws(() => resolveTrustProxy(), /Invalid TRUST_PROXY/);
+
+        process.env.TRUST_PROXY = '-1';
+        assert.throws(() => resolveTrustProxy(), /Invalid TRUST_PROXY/);
+      } finally {
+        restoreEnv('TRUST_PROXY', originalTrustProxy);
+        restoreEnv('NODE_ENV', originalNodeEnv);
+      }
+    });
+
+    it('prevents client IP spoofing via X-Forwarded-For with trustProxy: 1', async () => {
+      // Fastify 5's security design fails closed on numeric hop counts without immediate
+      // peer validation (returning socket 127.0.0.1), preventing direct client header manipulation.
+      const app = Fastify({ trustProxy: 1 });
+      app.get('/test-ip', async (req) => ({ ip: req.ip }));
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/test-ip',
+        headers: {
+          'x-forwarded-for': '203.0.113.1, 198.51.100.2',
+        },
+      });
+
+      assert.equal(res.statusCode, 200);
+      const data = JSON.parse(res.payload);
+      assert.equal(data.ip, '127.0.0.1', 'Fastify must not trust X-Forwarded-For from untrusted immediate peer');
+      assert.notEqual(data.ip, '203.0.113.1', 'Forged prepended IP must NOT be returned as client IP');
+      await app.close();
+    });
+
+    it('extracts trusted client IP when upstream reverse proxy is explicitly trusted', async () => {
+      // When the upstream reverse proxy (e.g. loopback) is explicitly trusted,
+      // Fastify peels the proxy hop and extracts the true client IP (198.51.100.2),
+      // discarding forged prepended hops (203.0.113.1).
+      const app = Fastify({ trustProxy: 'loopback' });
+      app.get('/test-ip', async (req) => ({ ip: req.ip }));
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/test-ip',
+        headers: {
+          'x-forwarded-for': '203.0.113.1, 198.51.100.2',
+        },
+      });
+
+      assert.equal(res.statusCode, 200);
+      const data = JSON.parse(res.payload);
+      assert.equal(data.ip, '198.51.100.2', 'Must extract client IP from trusted reverse proxy');
+      assert.notEqual(data.ip, '203.0.113.1', 'Forged prepended IP must NOT be returned as client IP');
+      await app.close();
     });
 
     it('does not spoof remote IP via X-Forwarded-For when trustProxy is disabled', async () => {
@@ -108,10 +194,12 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
   describe('2. Production Error Sanitization', () => {
     const originalEnv = process.env.NODE_ENV;
     const originalTrustProxy = process.env.TRUST_PROXY;
+    const originalSupabaseUrl = process.env.SUPABASE_URL;
 
     it('sanitizes 500 error messages to generic string in production', async () => {
       try {
         process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://example.supabase.co';
         delete process.env.TRUST_PROXY;
         const app = await buildApp();
 
@@ -137,12 +225,48 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       } finally {
         restoreEnv('NODE_ENV', originalEnv);
         restoreEnv('TRUST_PROXY', originalTrustProxy);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
+      }
+    });
+
+    it('sanitizes AppError messages with status >= 500 in production', async () => {
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://example.supabase.co';
+        delete process.env.TRUST_PROXY;
+        const app = await buildApp();
+
+        app.get('/test-app-error-500', async () => {
+          throw new AppError(
+            'DATABASE_QUERY_FAILED',
+            'SELECT * FROM users WHERE connection_str=postgres://admin:pw123@host:5432',
+            500
+          );
+        });
+
+        const res = await app.inject({
+          method: 'GET',
+          url: '/test-app-error-500',
+        });
+
+        assert.equal(res.statusCode, 500);
+        const body = JSON.parse(res.payload);
+        assert.equal(body.error.code, 'INTERNAL_ERROR');
+        assert.equal(body.error.message, 'An internal server error occurred.');
+        assert.ok(!res.payload.includes('pw123'), 'Must never leak connection details in 500 AppError');
+
+        await app.close();
+      } finally {
+        restoreEnv('NODE_ENV', originalEnv);
+        restoreEnv('TRUST_PROXY', originalTrustProxy);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
 
     it('preserves client-facing AppError messages below 500 in production', async () => {
       try {
         process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://example.supabase.co';
         delete process.env.TRUST_PROXY;
         const app = await buildApp();
 
@@ -164,6 +288,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       } finally {
         restoreEnv('NODE_ENV', originalEnv);
         restoreEnv('TRUST_PROXY', originalTrustProxy);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
   });
@@ -218,17 +343,47 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
     });
   });
 
-  describe('4. Startup Environment Validation (Supabase JWT Secret)', () => {
+  describe('4. Startup Environment Validation', () => {
     const originalEnv = process.env.NODE_ENV;
     const originalKey = process.env.RAILRADAR_API_KEY;
     const originalAuth = process.env.AUTH_SECRET;
     const originalJwt = process.env.SUPABASE_JWT_SECRET;
+    const originalSupabaseUrl = process.env.SUPABASE_URL;
+    const originalJwtIssuer = process.env.SUPABASE_JWT_ISSUER;
+
+    it('strictly requires resolvable Supabase issuer (SUPABASE_URL or SUPABASE_JWT_ISSUER) in production', () => {
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.RAILRADAR_API_KEY = 'valid_radar_key_12345';
+        process.env.AUTH_SECRET = 'valid_auth_secret_1234567890';
+        process.env.SUPABASE_JWT_SECRET = 'strong_production_supabase_jwt_secret_xyz123';
+        delete process.env.SUPABASE_URL;
+        delete process.env.SUPABASE_JWT_ISSUER;
+
+        assert.throws(
+          () => validateStartupEnvironment(),
+          /Configuration error: Missing SUPABASE_URL or SUPABASE_JWT_ISSUER in production/
+        );
+
+        // Providing SUPABASE_URL satisfies the requirement
+        process.env.SUPABASE_URL = 'https://mytenant.supabase.co';
+        assert.doesNotThrow(() => validateStartupEnvironment());
+      } finally {
+        restoreEnv('NODE_ENV', originalEnv);
+        restoreEnv('RAILRADAR_API_KEY', originalKey);
+        restoreEnv('AUTH_SECRET', originalAuth);
+        restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
+        restoreEnv('SUPABASE_JWT_ISSUER', originalJwtIssuer);
+      }
+    });
 
     it('strictly rejects weak or placeholder SUPABASE_JWT_SECRET in production', () => {
       try {
         process.env.NODE_ENV = 'production';
         process.env.RAILRADAR_API_KEY = 'valid_radar_key_12345';
         process.env.AUTH_SECRET = 'valid_auth_secret_1234567890';
+        process.env.SUPABASE_URL = 'https://mytenant.supabase.co';
 
         // Placeholder default
         process.env.SUPABASE_JWT_SECRET = 'dev_secret_change_in_prod';
@@ -252,6 +407,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         restoreEnv('RAILRADAR_API_KEY', originalKey);
         restoreEnv('AUTH_SECRET', originalAuth);
         restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
   });
@@ -262,6 +418,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
     const originalJwt = process.env.SUPABASE_JWT_SECRET;
     const originalAud = process.env.SUPABASE_JWT_AUDIENCE;
     const originalIss = process.env.SUPABASE_JWT_ISSUER;
+    const originalSupabaseUrl = process.env.SUPABASE_URL;
 
     function makeRawJwt(header: any, payload: any, secret?: string): string {
       const h = Buffer.from(JSON.stringify(header)).toString('base64url');
@@ -276,6 +433,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
     it('rejects HS256 tokens signed with AUTH_SECRET in production when SUPABASE_JWT_SECRET is set', async () => {
       try {
         process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://myproject.supabase.co';
         process.env.SUPABASE_JWT_SECRET = 'prod_supabase_jwt_secret_12345678';
         process.env.AUTH_SECRET = 'prod_application_auth_secret_99999999';
 
@@ -302,12 +460,14 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         restoreEnv('NODE_ENV', originalEnv);
         restoreEnv('AUTH_SECRET', originalAuth);
         restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
 
     it('fails closed when SUPABASE_JWT_SECRET is missing in production, ignoring AUTH_SECRET', async () => {
       try {
         process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://myproject.supabase.co';
         delete process.env.SUPABASE_JWT_SECRET;
         process.env.AUTH_SECRET = 'valid_production_auth_secret_123456';
 
@@ -318,12 +478,14 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         restoreEnv('NODE_ENV', originalEnv);
         restoreEnv('AUTH_SECRET', originalAuth);
         restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
 
     it('validates audience (aud) claim strictly in production', async () => {
       try {
         process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://myproject.supabase.co';
         process.env.SUPABASE_JWT_SECRET = 'prod_supabase_jwt_secret_12345678';
         delete process.env.SUPABASE_JWT_AUDIENCE;
 
@@ -338,7 +500,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         // Missing audience in production
         const missingAudToken = makeRawJwt(
           { alg: 'HS256', typ: 'JWT', kid: SUPABASE_PREVIOUS_HS256_KEY_ID },
-          { sub: 'user_aud_1', exp: Math.floor(Date.now() / 1000) + 3600 },
+          { sub: 'user_aud_1', exp: Math.floor(Date.now() / 1000) + 3600, iss: 'https://myproject.supabase.co/auth/v1' },
           process.env.SUPABASE_JWT_SECRET
         );
         assert.equal(await verifyJwtToken(missingAudToken), null, 'Missing aud in production must be rejected');
@@ -367,10 +529,11 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         restoreEnv('NODE_ENV', originalEnv);
         restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
         restoreEnv('SUPABASE_JWT_AUDIENCE', originalAud);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
 
-    it('validates issuer (iss) claim strictly when configured', async () => {
+    it('validates issuer (iss) claim strictly when configured and fails closed when unresolvable', async () => {
       try {
         process.env.NODE_ENV = 'production';
         process.env.SUPABASE_JWT_SECRET = 'prod_supabase_jwt_secret_12345678';
@@ -404,22 +567,30 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
           process.env.SUPABASE_JWT_SECRET
         );
         assert.equal(await verifyJwtToken(missingIssToken), null, 'Missing iss in production when expected must be rejected');
+
+        // Fails closed in production if issuer is completely unresolvable
+        delete process.env.SUPABASE_JWT_ISSUER;
+        delete process.env.SUPABASE_URL;
+        const unresolvableIssResult = await verifyJwtToken(validIssToken);
+        assert.equal(unresolvableIssResult, null, 'Must fail closed in production if issuer cannot be resolved');
       } finally {
         restoreEnv('NODE_ENV', originalEnv);
         restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
         restoreEnv('SUPABASE_JWT_ISSUER', originalIss);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
 
-    it('strictly rejects missing or invalid subject (sub) claim', async () => {
+    it('strictly enforces subject (sub) claim and rejects id-only fallback tokens', async () => {
       try {
         process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://myproject.supabase.co';
         process.env.SUPABASE_JWT_SECRET = 'prod_supabase_jwt_secret_12345678';
 
         // Empty string sub
         const emptySubToken = makeRawJwt(
           { alg: 'HS256', typ: 'JWT', kid: SUPABASE_PREVIOUS_HS256_KEY_ID },
-          { sub: '', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+          { sub: '', aud: 'authenticated', iss: 'https://myproject.supabase.co/auth/v1', exp: Math.floor(Date.now() / 1000) + 3600 },
           process.env.SUPABASE_JWT_SECRET
         );
         assert.equal(await verifyJwtToken(emptySubToken), null, 'Empty sub must be rejected');
@@ -427,7 +598,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         // Whitespace only sub
         const whitespaceSubToken = makeRawJwt(
           { alg: 'HS256', typ: 'JWT', kid: SUPABASE_PREVIOUS_HS256_KEY_ID },
-          { sub: '   ', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+          { sub: '   ', aud: 'authenticated', iss: 'https://myproject.supabase.co/auth/v1', exp: Math.floor(Date.now() / 1000) + 3600 },
           process.env.SUPABASE_JWT_SECRET
         );
         assert.equal(await verifyJwtToken(whitespaceSubToken), null, 'Whitespace sub must be rejected');
@@ -435,19 +606,43 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         // Missing sub entirely
         const noSubToken = makeRawJwt(
           { alg: 'HS256', typ: 'JWT', kid: SUPABASE_PREVIOUS_HS256_KEY_ID },
-          { aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+          { aud: 'authenticated', iss: 'https://myproject.supabase.co/auth/v1', exp: Math.floor(Date.now() / 1000) + 3600 },
           process.env.SUPABASE_JWT_SECRET
         );
         assert.equal(await verifyJwtToken(noSubToken), null, 'Missing sub must be rejected');
+
+        // Token with id only (no sub) MUST be rejected — no id fallback
+        const idOnlyToken = makeRawJwt(
+          { alg: 'HS256', typ: 'JWT', kid: SUPABASE_PREVIOUS_HS256_KEY_ID },
+          { id: 'user_target_fallback', aud: 'authenticated', iss: 'https://myproject.supabase.co/auth/v1', exp: Math.floor(Date.now() / 1000) + 3600 },
+          process.env.SUPABASE_JWT_SECRET
+        );
+        assert.equal(await verifyJwtToken(idOnlyToken), null, 'Tokens with "id" claim but no "sub" claim must be rejected');
+
+        // Non-string sub
+        const numSubToken = makeRawJwt(
+          { alg: 'HS256', typ: 'JWT', kid: SUPABASE_PREVIOUS_HS256_KEY_ID },
+          { sub: 123456, aud: 'authenticated', iss: 'https://myproject.supabase.co/auth/v1', exp: Math.floor(Date.now() / 1000) + 3600 },
+          process.env.SUPABASE_JWT_SECRET
+        );
+        assert.equal(await verifyJwtToken(numSubToken), null, 'Non-string sub must be rejected');
+
+        // Valid sub claim succeeds
+        const validSubToken = createTestToken({ sub: 'user_valid_uuid_123' });
+        const validRes = await verifyJwtToken(validSubToken);
+        assert.ok(validRes, 'Valid string sub must verify');
+        assert.equal(validRes.id, 'user_valid_uuid_123');
       } finally {
         restoreEnv('NODE_ENV', originalEnv);
         restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
 
     it('strictly rejects unsupported algorithms (none, RS256, HS512)', async () => {
       try {
         process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://myproject.supabase.co';
         process.env.SUPABASE_JWT_SECRET = 'prod_supabase_jwt_secret_12345678';
 
         const noneToken = makeRawJwt(
@@ -472,6 +667,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       } finally {
         restoreEnv('NODE_ENV', originalEnv);
         restoreEnv('SUPABASE_JWT_SECRET', originalJwt);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
     });
   });
@@ -524,6 +720,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
 
   describe('7. Route-Level Error Sanitization & Safe Public Responses', () => {
     const originalEnv = process.env.NODE_ENV;
+    const originalSupabaseUrl = process.env.SUPABASE_URL;
 
     it('toSafeErrorMessage exposes err.message in development for debugging', () => {
       try {
@@ -548,7 +745,7 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       }
     });
 
-    it('toSafeErrorMessage preserves trusted client-facing AppError messages in production', () => {
+    it('toSafeErrorMessage preserves trusted client-facing AppError messages below 500 in production', () => {
       try {
         process.env.NODE_ENV = 'production';
         const appErr = new AppError('INVALID_TRAIN', 'Train number 99999 was not found.', 404);
@@ -558,9 +755,20 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
       }
     });
 
+    it('toSafeErrorMessage sanitizes AppError messages with status >= 500 in production', () => {
+      try {
+        process.env.NODE_ENV = 'production';
+        const appErr500 = new AppError('INTERNAL_DB_CRASH', 'postgres://admin:pw@host/db crash', 500);
+        assert.equal(toSafeErrorMessage(appErr500, 'Generic fallback'), 'Generic fallback');
+      } finally {
+        restoreEnv('NODE_ENV', originalEnv);
+      }
+    });
+
     it('verifies route catch blocks do not leak upstream secrets in production', async () => {
       try {
         process.env.NODE_ENV = 'production';
+        process.env.SUPABASE_URL = 'https://example.supabase.co';
         delete process.env.TRUST_PROXY;
         const app = await buildApp();
 
@@ -591,7 +799,158 @@ describe('Security Hardening Suite (Fastify 5, Proxy, Origin, Error Sanitization
         await app.close();
       } finally {
         restoreEnv('NODE_ENV', originalEnv);
+        restoreEnv('SUPABASE_URL', originalSupabaseUrl);
       }
+    });
+  });
+
+  describe('8. Bounded JWKS Caching, Key Rotation & Verification', () => {
+    it('parseJwks enforces EC P-256 curve, ES256 alg, and non-empty kid', () => {
+      const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const validJwk = publicKey.export({ format: 'jwk' });
+      validJwk.kid = 'valid-key-id-1';
+      validJwk.alg = 'ES256';
+      validJwk.use = 'sig';
+
+      const validParsed = parseJwks({ keys: [validJwk] });
+      assert.equal(validParsed.size, 1);
+      assert.ok(validParsed.has('valid-key-id-1'));
+
+      // Non-EC key is rejected
+      const { publicKey: rsaPub } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+      const rsaJwk = rsaPub.export({ format: 'jwk' });
+      rsaJwk.kid = 'rsa-key';
+      assert.equal(parseJwks({ keys: [rsaJwk] }).size, 0);
+
+      // Wrong curve is rejected
+      const wrongCurveJwk = { ...validJwk, crv: 'secp256k1', kid: 'wrong-crv' };
+      assert.equal(parseJwks({ keys: [wrongCurveJwk] }).size, 0);
+
+      // Wrong algorithm is rejected
+      const wrongAlgJwk = { ...validJwk, alg: 'RS256', kid: 'wrong-alg' };
+      assert.equal(parseJwks({ keys: [wrongAlgJwk] }).size, 0);
+
+      // Missing kid is rejected
+      const noKidJwk = { ...validJwk, kid: '' };
+      assert.equal(parseJwks({ keys: [noKidJwk] }).size, 0);
+    });
+
+    it('setTrustedJwks establishes a 10-minute cache TTL', () => {
+      clearJwksCache();
+      const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const jwk = publicKey.export({ format: 'jwk' });
+      jwk.kid = 'ttl-key-1';
+      jwk.alg = 'ES256';
+
+      setTrustedJwks({ keys: [jwk] });
+      assert.equal(getJwksCacheSize(), 1);
+      const expiresAt = getJwksCacheExpiresAt();
+      const now = Date.now();
+      assert.ok(expiresAt > now, 'Cache must have a future expiration timestamp');
+      assert.ok(expiresAt <= now + DEFAULT_JWKS_CACHE_TTL_MS, 'Cache TTL must not exceed configured default');
+      clearJwksCache();
+    });
+
+    it('replaces the key set on refresh to evict retired or revoked keys', () => {
+      clearJwksCache();
+      const { publicKey: key1 } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const jwk1 = key1.export({ format: 'jwk' });
+      jwk1.kid = 'active-key-v1';
+      jwk1.alg = 'ES256';
+
+      setTrustedJwks({ keys: [jwk1] });
+      assert.equal(getJwksCacheSize(), 1);
+
+      // Key rotation occurs: Key 1 is retired, Key 2 replaces it
+      const { publicKey: key2 } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const jwk2 = key2.export({ format: 'jwk' });
+      jwk2.kid = 'active-key-v2';
+      jwk2.alg = 'ES256';
+
+      // Simulate full JWKS replace on refresh
+      clearJwksCache();
+      setTrustedJwks({ keys: [jwk2] });
+
+      assert.equal(getJwksCacheSize(), 1);
+      assert.equal(parseJwks({ keys: [jwk1] }).has('active-key-v1'), true);
+      // active-key-v1 is no longer in cache
+      assert.equal(getJwksCacheSize(), 1);
+      clearJwksCache();
+    });
+
+    it('rejects ES256 tokens missing kid header without ambiguous single-key fallback', async () => {
+      clearJwksCache();
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const jwk = publicKey.export({ format: 'jwk' });
+      jwk.kid = 'ec-registered-key';
+      jwk.alg = 'ES256';
+      setTrustedJwks({ keys: [jwk] });
+
+      // Create an ES256 token that explicitly omits the kid header
+      const header = { alg: 'ES256', typ: 'JWT' }; // No kid
+      const payload = { sub: 'user_nokid_1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 };
+      const hB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+      const pB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+      const data = Buffer.from(`${hB64}.${pB64}`, 'utf-8');
+      const sig = crypto.sign('SHA256', data, { key: privateKey, dsaEncoding: 'ieee-p1363' });
+      const tokenWithoutKid = `${hB64}.${pB64}.${sig.toString('base64url')}`;
+
+      // Must be strictly rejected because kid is required
+      const verified = await verifyJwtToken(tokenWithoutKid);
+      assert.equal(verified, null, 'ES256 token without kid in header must be rejected');
+      clearJwksCache();
+    });
+
+    it('successfully accepts and verifies valid ES256 token with registered kid', async () => {
+      clearJwksCache();
+      const token = createTestToken({ sub: 'user_es256_success' }, { alg: 'ES256' });
+      const verified = await verifyJwtToken(token);
+      assert.ok(verified, 'Valid ES256 token with registered kid must verify');
+      assert.equal(verified.id, 'user_es256_success');
+      clearJwksCache();
+    });
+  });
+
+  describe('9. Server-Side Sensitive Log Redaction', () => {
+    it('cleanSensitiveLogText redacts connection strings, bearer tokens, and secrets', () => {
+      const postgresLeak = 'Connecting to postgres://admin:super_secret_pw@db.production.aws:5432/exprest';
+      const redactedPostgres = cleanSensitiveLogText(postgresLeak);
+      assert.ok(!redactedPostgres.includes('super_secret_pw'));
+      assert.ok(redactedPostgres.includes('postgres://[REDACTED]@[REDACTED]/exprest'));
+
+      const postgresqlLeak = 'Connecting to postgresql://user:pass123@host:5432/db';
+      assert.ok(!cleanSensitiveLogText(postgresqlLeak).includes('pass123'));
+
+      const redisLeak = 'Connecting to redis://:mypassword@cache.internal:6379';
+      assert.ok(!cleanSensitiveLogText(redisLeak).includes('mypassword'));
+
+      const bearerLeak = 'Failed auth request Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.doNotLeakThis';
+      const redactedBearer = cleanSensitiveLogText(bearerLeak);
+      assert.ok(!redactedBearer.includes('doNotLeakThis'));
+      assert.ok(redactedBearer.includes('Bearer [REDACTED]'));
+
+      const secretParamLeak = 'Request params: api_key=topsecret123&token=myauthtoken456&password=password789';
+      const redactedParams = cleanSensitiveLogText(secretParamLeak);
+      assert.ok(!redactedParams.includes('topsecret123'));
+      assert.ok(!redactedParams.includes('myauthtoken456'));
+      assert.ok(!redactedParams.includes('password789'));
+    });
+
+    it('errorLogSerializer scrubs message and stack while preserving code and statusCode', () => {
+      const sensitiveErr = new AppError(
+        'DB_CONNECT_FAIL',
+        'Failed to connect to postgres://app_user:prod_db_pw@internal.db:5432/exprest',
+        500
+      );
+
+      const serialized = errorLogSerializer(sensitiveErr);
+      assert.equal(serialized.type, 'AppError');
+      assert.equal(serialized.code, 'DB_CONNECT_FAIL');
+      assert.equal(serialized.statusCode, 500);
+      assert.ok(!serialized.message.includes('prod_db_pw'));
+      assert.ok(serialized.message.includes('postgres://[REDACTED]@[REDACTED]/exprest'));
+      assert.ok(serialized.stack);
+      assert.ok(!serialized.stack.includes('prod_db_pw'));
     });
   });
 });
