@@ -1,0 +1,61 @@
+name: CI & Security Verification
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-and-quality:
+    name: Security, Lint, Test & Build
+    runs-on: ubuntu-latest
+
+    env:
+      NODE_ENV: test
+      AUTH_SECRET: ci_test_auth_secret_minimum_16_characters
+      RAILRADAR_API_KEY: mock_ci_railradar_api_key_test
+      SUPABASE_URL: https://mock-test.supabase.co
+      PUBLIC_APP_URL: https://exprest.vercel.app
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Dependency Security Audit
+        run: pnpm audit --prod
+
+      - name: Secret Scan Verification
+        run: |
+          echo "Scanning for accidental secret commits or unignored .env files..."
+          git ls-files | grep -E '^\.env|\.env\.(local|production|staging)$' && exit 1 || echo "No tracked .env files detected."
+
+      - name: Monorepo Typecheck
+        run: pnpm -r run typecheck
+
+      - name: Monorepo Lint
+        run: pnpm -r run lint
+
+      - name: Automated Security & Regression Tests
+        run: pnpm -r run test
+
+      - name: Production Build Verification
+        run: pnpm -r run build

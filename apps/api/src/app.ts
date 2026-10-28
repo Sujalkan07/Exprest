@@ -110,6 +110,7 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
   const isTest = process.env.NODE_ENV === 'test';
 
   const app: FastifyInstance = Fastify({
+    bodyLimit: 64 * 1024, // 64 KB max payload limit (prevents payload flooding & memory exhaustion)
     trustProxy: resolveTrustProxy() as any,
     logger: isTest
       ? false
@@ -200,7 +201,13 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
 
     return reply.status(statusCode).send({
       error: {
-        code: (err as any)?.code || (statusCode >= 500 ? 'INTERNAL_ERROR' : 'BAD_REQUEST'),
+        code:
+          (err as any)?.code ||
+          (statusCode === 429
+            ? 'RATE_LIMIT_EXCEEDED'
+            : statusCode >= 500
+              ? 'INTERNAL_ERROR'
+              : 'BAD_REQUEST'),
         message: safeMessage,
         retryable: false,
       },
