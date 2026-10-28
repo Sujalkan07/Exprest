@@ -29,7 +29,13 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Restrict function execution permissions: only postgres, service_role, and supabase auth service need execute
 REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.handle_new_user() TO postgres, service_role, supabase_auth_admin;
+GRANT EXECUTE ON FUNCTION public.handle_new_user() TO postgres, service_role;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.handle_new_user() TO supabase_auth_admin';
+  END IF;
+END $$;
 
 -- 2. Harden UPDATE policy on public.profiles with an explicit WITH CHECK constraint (INFO-02)
 -- Guarantees authenticated users can never alter the ownership identifier (id) of a profile row.

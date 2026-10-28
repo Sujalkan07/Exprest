@@ -42,3 +42,6 @@ api_response.json
 
 # TypeScript build info files (ignore generated tsbuildinfo)
 *.tsbuildinfo
+
+# Supabase CLI temp files
+supabase/.temp/
