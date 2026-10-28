@@ -17,16 +17,24 @@ export async function GET(request: NextRequest) {
       : '/';
 
   if (code) {
-    const cookieStore = cookies();
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key';
+    const isProd = process.env.NODE_ENV === 'production';
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    if (isProd && (!supabaseUrl || supabaseUrl === 'https://placeholder.supabase.co' || !supabaseAnonKey || supabaseAnonKey === 'placeholder-anon-key')) {
+      return NextResponse.redirect(new URL('/login?error=auth_unavailable', request.url));
+    }
+
+    const effectiveUrl = supabaseUrl || 'https://placeholder.supabase.co';
+    const effectiveAnonKey = supabaseAnonKey || 'placeholder-anon-key';
+    const cookieStore = await cookies();
+
+    const supabase = createServerClient(effectiveUrl, effectiveAnonKey, {
       cookies: {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)

@@ -67,7 +67,21 @@ export class OverpassAdapter implements PoiProvider {
           const name = el.tags?.name || el.tags?.['name:en'] || el.tags?.official_name;
           const lat = typeof el.lat === 'number' ? el.lat : el.center?.lat;
           const lon = typeof el.lon === 'number' ? el.lon : el.center?.lon;
-          if (!name || typeof lat !== 'number' || typeof lon !== 'number') continue;
+
+          // Strict coordinate & name validity verification
+          if (
+            !name ||
+            typeof lat !== 'number' ||
+            typeof lon !== 'number' ||
+            !isFinite(lat) ||
+            !isFinite(lon) ||
+            lat < -90 ||
+            lat > 90 ||
+            lon < -180 ||
+            lon > 180
+          ) {
+            continue;
+          }
 
           // Calculate distance to the nearest route point or bounding box center
           let minDistanceM = 0;
@@ -78,11 +92,24 @@ export class OverpassAdapter implements PoiProvider {
               if (d < shortest) shortest = d;
             }
             minDistanceM = shortest !== Infinity ? shortest : 0;
+            // Enforce corridor threshold: exclude POIs farther than 10 km from track alignment
+            if (minDistanceM > 10_000) {
+              continue;
+            }
           } else {
             const midLat = (bounds.minLat + bounds.maxLat) / 2;
             const midLon = (bounds.minLon + bounds.maxLon) / 2;
             minDistanceM = haversineDistanceM(lat, lon, midLat, midLon);
           }
+
+          // Deduplicate by name and spatial proximity (< 200m)
+          const nameNormalized = name.toLowerCase().trim();
+          const isDuplicate = allPois.some(
+            (p) =>
+              p.name.toLowerCase().trim() === nameNormalized ||
+              haversineDistanceM(lat, lon, p.latitude, p.longitude) < 200
+          );
+          if (isDuplicate) continue;
 
           seenIds.add(poiId);
           allPois.push({
@@ -98,6 +125,8 @@ export class OverpassAdapter implements PoiProvider {
         }
       }
 
+      // Sort by proximity to railway track corridor ascending
+      allPois.sort((a, b) => a.distanceFromRouteM - b.distanceFromRouteM);
       return allPois.slice(0, 15);
     } catch (err) {
       console.warn('Overpass query failed:', err);

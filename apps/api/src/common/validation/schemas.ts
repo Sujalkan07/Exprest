@@ -73,6 +73,12 @@ export const createShareBodySchema = z.object({
         message: 'journeyId must specify a valid real calendar date',
       }
     ),
+  expiresInSeconds: z
+    .number()
+    .int('expiresInSeconds must be an integer')
+    .positive('expiresInSeconds must be positive')
+    .max(30 * 86400, 'expiresInSeconds cannot exceed 30 days')
+    .optional(),
 });
 
 export const shareParamSchema = z.object({

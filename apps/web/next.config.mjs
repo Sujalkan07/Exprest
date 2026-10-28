@@ -25,9 +25,12 @@ if (apiBaseOrigin && !connectSources.includes(apiBaseOrigin)) {
   connectSources.push(apiBaseOrigin);
 }
 
+const isProd = process.env.NODE_ENV === 'production';
+const scriptSrc = isProd ? "'self' 'unsafe-inline'" : "'self' 'unsafe-eval' 'unsafe-inline'";
+
 const cspHeader = `
   default-src 'self';
-  script-src 'self' 'unsafe-eval' 'unsafe-inline';
+  script-src ${scriptSrc};
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' https://fonts.gstatic.com data:;
   img-src 'self' data: blob: https:;
@@ -46,11 +49,20 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   async rewrites() {
-    const apiBase = (
+    const rawApiBase = (
       process.env.API_URL ||
       process.env.NEXT_PUBLIC_API_URL ||
-      (process.env.NODE_ENV === 'production' ? 'https://exprest.onrender.com' : 'http://localhost:4000')
+      (isProd ? 'https://exprest.onrender.com' : 'http://localhost:4000')
     ).replace(/\/+$/, '');
+
+    let apiBase = isProd ? 'https://exprest.onrender.com' : 'http://localhost:4000';
+    try {
+      const parsed = new URL(rawApiBase);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        apiBase = parsed.origin;
+      }
+    } catch {}
+
     return [
       {
         source: '/api/:path*',

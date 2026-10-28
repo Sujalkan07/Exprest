@@ -49,7 +49,7 @@ export default function SharedJourneyPage() {
           <div className="p-8 bg-surface-elevated border border-border rounded-card text-center space-y-2">
             <h2 className="text-base font-bold text-text">Shared Journey Unavailable</h2>
             <p className="text-xs text-text-secondary max-w-md mx-auto">
-              This shared link could not be resolved. Note that custom short tokens require database persistence to be configured.
+              This shared link is invalid, expired, or unavailable. Please verify the link or generate a new share URL.
             </p>
           </div>
         )}

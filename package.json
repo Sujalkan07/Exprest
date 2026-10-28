@@ -13,5 +13,17 @@
     "turbo": "^2.0.0",
     "typescript": "^5.5.0"
   },
-  "packageManager": "pnpm@9.0.0"
+  "packageManager": "pnpm@9.0.0",
+  "pnpm": {
+    "overrides": {
+      "glob@>=10.2.0 <10.5.0": "10.5.0",
+      "minimatch@>=9.0.0 <9.0.7": "9.0.9",
+      "postcss@<=8.5.17": "8.5.32",
+      "source-map-js@<1.2.2": "1.2.2",
+      "fast-uri@<2.4.8": "2.4.8",
+      "fast-uri@>=3.0.0 <3.1.9": "3.1.9",
+      "esbuild@<0.28.1": "0.28.2",
+      "postcss-selector-parser@<6.1.5": "6.1.5"
+    }
+  }
 }

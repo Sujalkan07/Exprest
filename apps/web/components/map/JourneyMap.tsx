@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { createStationPopupNode, createTrainMarkerNode } from './mapDOMUtils';
 
@@ -142,7 +142,7 @@ export const JourneyMap = forwardRef<JourneyMapRef, JourneyMapProps>(({
 
     map.current.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
     map.current.on('dragstart', () => setIsFollowing(false));
-    map.current.on('zoomstart', (e) => { if (e.originalEvent) setIsFollowing(false); });
+    map.current.on('zoomstart', (e: { originalEvent?: unknown }) => { if (e.originalEvent) setIsFollowing(false); });
 
     map.current.on('load', () => {
       if (!map.current) return;

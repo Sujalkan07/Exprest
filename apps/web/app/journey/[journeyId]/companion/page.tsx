@@ -284,7 +284,7 @@ export default function CompanionPage() {
       <div className="bg-surface-elevated min-h-screen flex items-center justify-center p-8 text-center text-secondary">
         <div className="flex flex-col items-center gap-3">
           <span className="material-symbols-outlined text-4xl animate-spin text-primary">sync</span>
-          <p className="font-medium text-body-md">Synchronizing Travel Companion Sensors...</p>
+          <p className="font-medium text-body-md">Synchronizing Travel Companion Data...</p>
         </div>
       </div>
     );
@@ -352,7 +352,7 @@ export default function CompanionPage() {
                 className="inline-flex items-center gap-2 px-3.5 py-2 bg-surface-elevated hover:bg-surface-container-low text-primary border border-border rounded-lg text-body-sm font-body-sm shadow-xs transition-all duration-150 active:scale-[0.98] disabled:opacity-60 cursor-pointer"
               >
                 <span className={`material-symbols-outlined text-[17px] text-secondary ${isRefreshing ? 'animate-spin' : ''}`}>sync</span>
-                <span>{isRefreshing ? 'Refreshing...' : 'Refresh Sensors'}</span>
+                <span>{isRefreshing ? 'Refreshing...' : 'Refresh Weather & POIs'}</span>
               </button>
 
               <button
@@ -382,9 +382,9 @@ export default function CompanionPage() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-secondary text-[20px]">thermostat</span>
-              <h2 className="text-heading-md font-heading-md text-primary">Microclimate Sensor Array</h2>
+              <h2 className="text-heading-md font-heading-md text-primary">Station Weather &amp; Forecasts</h2>
             </div>
-            <div className="text-label font-label text-text-tertiary">Station sensor barometers sync every 45s</div>
+            <div className="text-label font-label text-text-tertiary">Station meteorological forecast synced with Open-Meteo</div>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -599,7 +599,7 @@ export default function CompanionPage() {
               >
                 <div className="px-2.5 py-1 bg-primary text-on-primary rounded-md text-label font-label shadow-md flex items-center gap-1 whitespace-nowrap">
                   <span className="w-1.5 h-1.5 rounded-full bg-success pulse-live"></span>
-                  <span>{trainNumber} · km {traveledKm} ({currentSpeed} km/h)</span>
+                  <span>{trainNumber} · km {traveledKm}{currentSpeed != null ? ` (${currentSpeed} km/h)` : ''}</span>
                 </div>
                 <div className="w-3 h-3 bg-primary rotate-45 -mt-1.5 mb-1"></div>
                 <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center ring-4 ring-primary/20">
