@@ -107,16 +107,6 @@ FROM auth.users
 ON CONFLICT (id) DO NOTHING;
 
 -- 8. Record applied migrations in supabase_migrations if migration tracking table exists
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'supabase_migrations' AND table_name = 'schema_migrations'
-  ) THEN
-    INSERT INTO supabase_migrations.schema_migrations (version)
-    VALUES ('001_create_profiles'), ('002_harden_profile_functions')
-    ON CONFLICT DO NOTHING;
-  END IF;
-END $$;
+
 
 COMMIT;
