@@ -47,17 +47,17 @@ export const AlternativesClient: React.FC = () => {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Query state initialized from URL or defaults
-  const fromParam = (searchParams.get('from') || 'BZA').toUpperCase();
-  const toParam = (searchParams.get('to') || 'LKO').toUpperCase();
+  // Read search parameters from URL
+  const fromParam = (searchParams.get('from') || '').trim().toUpperCase();
+  const toParam = (searchParams.get('to') || '').trim().toUpperCase();
   const dateParam = searchParams.get('date') || getTodayIST();
   const classParam = searchParams.get('class') || 'ALL';
 
   const [searchData, setSearchData] = useState<SearchFormData>({
     originCode: fromParam,
-    originName: fromParam === 'BZA' ? 'Vijayawada Junction' : fromParam,
+    originName: fromParam,
     destinationCode: toParam,
-    destinationName: toParam === 'LKO' ? 'Lucknow Charbagh' : toParam,
+    destinationName: toParam,
     date: dateParam,
     travelClass: classParam,
   });
@@ -85,60 +85,90 @@ export const AlternativesClient: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Data fetching state
-  const [isLoading, setIsLoading] = useState(true);
+  const hasQueryParams = Boolean(fromParam && toParam);
+  const [isLoading, setIsLoading] = useState(hasQueryParams);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [journeyData, setJourneyData] = useState<AlternativeJourneysResult | null>(null);
 
-  // Fetch alternatives from API
-  const fetchAlternatives = useCallback(async (params: SearchFormData, isBackgroundRefresh = false) => {
-    if (isBackgroundRefresh) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
+  // Single URL-driven effect: runs when searchParams change
+  useEffect(() => {
+    const from = (searchParams.get('from') || '').trim().toUpperCase();
+    const to = (searchParams.get('to') || '').trim().toUpperCase();
+    const date = searchParams.get('date') || getTodayIST();
+    const travelClass = searchParams.get('class') || 'ALL';
+    const trainNumber = (searchParams.get('train') || '').trim();
+
+    setSearchData({
+      originCode: from,
+      originName: from,
+      destinationCode: to,
+      destinationName: to,
+      date,
+      travelClass,
+    });
+
+    // P0: Opening /alternatives without query parameters must NOT run an automatic search
+    if (!from || !to) {
+      setJourneyData(null);
+      setIsLoading(false);
       setError(null);
+      return;
     }
 
-    try {
-      const q = new URLSearchParams({
-        from: params.originCode,
-        to: params.destinationCode,
-        date: params.date,
-        class: params.travelClass,
+    if (from === to) {
+      setError('Origin and destination stations cannot be the same station.');
+      setIsLoading(false);
+      setJourneyData(null);
+      return;
+    }
+
+    let isSubscribed = true;
+    setIsLoading(true);
+    setError(null);
+
+    const q = new URLSearchParams({
+      from,
+      to,
+      date,
+      class: travelClass,
+    });
+    if (trainNumber) {
+      q.set('trainNumber', trainNumber);
+    }
+
+    apiFetch<any>(`/api/v1/journeys/alternatives?${q.toString()}`, { timeoutMs: 15000 })
+      .then((res) => {
+        if (!isSubscribed) return;
+        const payload: AlternativeJourneysResult = res?.data || res;
+        setJourneyData(payload);
+
+        // Auto-switch to tab with results if current tab is empty
+        if (payload?.sameTrainAlternatives && payload.sameTrainAlternatives.length > 0) {
+          setActiveTab('tab-sametrain');
+        } else if (payload?.directAlternatives && payload.directAlternatives.length > 0) {
+          setActiveTab('tab-direct');
+        } else if (payload?.connectingAlternatives && payload.connectingAlternatives.length > 0) {
+          setActiveTab('tab-connecting');
+        }
+      })
+      .catch((err: any) => {
+        if (!isSubscribed) return;
+        setError(err?.message || 'Failed to fetch alternative journeys.');
+      })
+      .finally(() => {
+        if (isSubscribed) {
+          setIsLoading(false);
+        }
       });
 
-      const res = await apiFetch<any>(
-        `/api/v1/journeys/alternatives?${q.toString()}`,
-        { timeoutMs: 15000 }
-      );
+    return () => {
+      isSubscribed = false;
+    };
+  }, [searchParams]);
 
-      const payload: AlternativeJourneysResult = res?.data || res;
-      setJourneyData(payload);
-
-      // Auto-switch to tab with results if current tab is empty
-      if (payload?.sameTrainAlternatives && payload.sameTrainAlternatives.length > 0) {
-        setActiveTab('tab-sametrain');
-      } else if (payload?.directAlternatives && payload.directAlternatives.length > 0) {
-        setActiveTab('tab-direct');
-      } else if (payload?.connectingAlternatives && payload.connectingAlternatives.length > 0) {
-        setActiveTab('tab-connecting');
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to fetch alternative journeys.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  // Run on mount or when URL params change
-  useEffect(() => {
-    fetchAlternatives(searchData);
-  }, [fetchAlternatives, searchData]);
-
-  // Handle Search Submission
+  // Handle Search Submission: update URL only, letting the URL effect perform the single fetch
   const handleSearch = (newSearch: SearchFormData) => {
-    setSearchData(newSearch);
     const params = new URLSearchParams({
       from: newSearch.originCode,
       to: newSearch.destinationCode,
@@ -146,8 +176,30 @@ export const AlternativesClient: React.FC = () => {
       class: newSearch.travelClass,
     });
     router.push(`/alternatives?${params.toString()}`);
-    fetchAlternatives(newSearch);
   };
+
+  // Manual refresh via OriginalRequestBanner
+  const handleRefresh = useCallback(async () => {
+    if (!searchData.originCode || !searchData.destinationCode) return;
+    setIsRefreshing(true);
+    try {
+      const q = new URLSearchParams({
+        from: searchData.originCode,
+        to: searchData.destinationCode,
+        date: searchData.date,
+        class: searchData.travelClass,
+      });
+      const res = await apiFetch<any>(`/api/v1/journeys/alternatives?${q.toString()}`, {
+        timeoutMs: 15000,
+      });
+      const payload: AlternativeJourneysResult = res?.data || res;
+      setJourneyData(payload);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to refresh alternative journeys.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [searchData]);
 
   // Check if filters differ from default
   const hasActiveFilters = useMemo(() => {
@@ -198,11 +250,14 @@ export const AlternativesClient: React.FC = () => {
   const handleShare = (title: string) => {
     if (typeof window !== 'undefined') {
       const url = window.location.href;
-      navigator.clipboard?.writeText(url).then(() => {
-        setToastMessage(`Link copied! Shared: ${title}`);
-      }).catch(() => {
-        setToastMessage(`URL: ${url}`);
-      });
+      navigator.clipboard
+        ?.writeText(url)
+        .then(() => {
+          setToastMessage(`Link copied! Shared: ${title}`);
+        })
+        .catch(() => {
+          setToastMessage(`URL: ${url}`);
+        });
     }
   };
 
@@ -214,7 +269,7 @@ export const AlternativesClient: React.FC = () => {
     }
   }, [toastMessage]);
 
-  // Filtered and sorted lists
+  // Filtered and sorted lists — Data-Integrity: Never treat null fare or duration as 0!
   const filteredSameTrain = useMemo(() => {
     if (!journeyData?.sameTrainAlternatives || !filters.includeEarlierStop || filters.directOnly) {
       return [];
@@ -222,20 +277,42 @@ export const AlternativesClient: React.FC = () => {
 
     return journeyData.sameTrainAlternatives
       .filter((item) => {
-        const fare = item.fare || 0;
-        if (fare > filters.maxFare) return false;
-        if (item.totalJourneyMinutes > filters.maxDurationMinutes) return false;
+        if (
+          filters.availableOnly &&
+          !item.availabilityAvailable &&
+          item.availabilityCategory !== 'AVAILABLE' &&
+          item.availabilityCategory !== 'RAC'
+        ) {
+          return false;
+        }
+        if (item.fare != null && item.fare > filters.maxFare) return false;
+        if (
+          item.totalJourneyMinutes > 0 &&
+          item.totalJourneyMinutes > filters.maxDurationMinutes
+        ) {
+          return false;
+        }
         return true;
       })
       .sort((a, b) => {
-        const fareA = a.fare || 0;
-        const fareB = b.fare || 0;
-        if (activeSort === 'cheapest') return fareA - fareB;
-        if (activeSort === 'fastest') return a.totalJourneyMinutes - b.totalJourneyMinutes;
-        if (activeSort === 'earliest') return a.arrivalTimeDestination.localeCompare(b.arrivalTimeDestination);
-        // Default / best: lowest fare difference, then lowest distance difference
-        const diffA = a.fareDifference || 0;
-        const diffB = b.fareDifference || 0;
+        if (activeSort === 'cheapest') {
+          if (a.fare == null && b.fare == null) return 0;
+          if (a.fare == null) return 1;
+          if (b.fare == null) return -1;
+          return a.fare - b.fare;
+        }
+        if (activeSort === 'fastest') {
+          if (!a.totalJourneyMinutes && !b.totalJourneyMinutes) return 0;
+          if (!a.totalJourneyMinutes) return 1;
+          if (!b.totalJourneyMinutes) return -1;
+          return a.totalJourneyMinutes - b.totalJourneyMinutes;
+        }
+        if (activeSort === 'earliest') {
+          return a.arrivalTimeDestination.localeCompare(b.arrivalTimeDestination);
+        }
+        // Default / best: lowest fare difference, then shortest journey
+        const diffA = a.fareDifference ?? 9999;
+        const diffB = b.fareDifference ?? 9999;
         return diffA - diffB;
       });
   }, [journeyData?.sameTrainAlternatives, filters, activeSort]);
@@ -245,23 +322,44 @@ export const AlternativesClient: React.FC = () => {
 
     return journeyData.directAlternatives
       .filter((train) => {
-        const fare = train.fare || 0;
-        if (fare > filters.maxFare) return false;
-        if (train.durationMinutes > filters.maxDurationMinutes) return false;
+        if (
+          filters.availableOnly &&
+          !train.availabilityAvailable &&
+          train.availabilityCategory !== 'AVAILABLE' &&
+          train.availabilityCategory !== 'RAC'
+        ) {
+          return false;
+        }
+        if (train.fare != null && train.fare > filters.maxFare) return false;
+        if (
+          train.durationMinutes > 0 &&
+          train.durationMinutes > filters.maxDurationMinutes
+        ) {
+          return false;
+        }
         return true;
       })
       .sort((a, b) => {
-        const fareA = trainA(a);
-        const fareB = trainA(b);
-        if (activeSort === 'cheapest') return fareA - fareB;
-        if (activeSort === 'fastest') return a.durationMinutes - b.durationMinutes;
-        if (activeSort === 'earliest') return a.arrivalTime.localeCompare(b.arrivalTime);
-        // Best: sort by duration then fare
-        return a.durationMinutes - b.durationMinutes;
+        if (activeSort === 'cheapest') {
+          if (a.fare == null && b.fare == null) return 0;
+          if (a.fare == null) return 1;
+          if (b.fare == null) return -1;
+          return a.fare - b.fare;
+        }
+        if (activeSort === 'fastest') {
+          if (!a.durationMinutes && !b.durationMinutes) return 0;
+          if (!a.durationMinutes) return 1;
+          if (!b.durationMinutes) return -1;
+          return a.durationMinutes - b.durationMinutes;
+        }
+        if (activeSort === 'earliest') {
+          return a.arrivalTime.localeCompare(b.arrivalTime);
+        }
+        // Best: duration then fare
+        const durA = a.durationMinutes || 9999;
+        const durB = b.durationMinutes || 9999;
+        return durA - durB;
       });
-    function trainA(t: { fare: number | null }) {
-      return t.fare || 0;
-    }
   }, [journeyData?.directAlternatives, filters, activeSort]);
 
   const filteredConnecting = useMemo(() => {
@@ -269,23 +367,44 @@ export const AlternativesClient: React.FC = () => {
 
     return journeyData.connectingAlternatives
       .filter((con) => {
-        const fare = con.totalFare || 0;
-        if (fare > filters.maxFare) return false;
-        if (con.totalDurationMinutes > filters.maxDurationMinutes) return false;
+        if (
+          filters.availableOnly &&
+          con.availabilityCategory !== 'AVAILABLE' &&
+          con.availabilityCategory !== 'RAC'
+        ) {
+          return false;
+        }
+        if (filters.sameStationOnly && con.leg1.to.code !== con.leg2.from.code) {
+          return false;
+        }
+        if (con.totalFare != null && con.totalFare > filters.maxFare) return false;
+        if (
+          con.totalDurationMinutes > 0 &&
+          con.totalDurationMinutes > filters.maxDurationMinutes
+        ) {
+          return false;
+        }
         if (con.transferLayoverMinutes > filters.maxLayoverMinutes) return false;
         return true;
       })
       .sort((a, b) => {
-        const fareA = con.fare(a);
-        const fareB = con.fare(b);
-        if (activeSort === 'cheapest') return fareA - fareB;
-        if (activeSort === 'fastest') return a.totalDurationMinutes - b.totalDurationMinutes;
-        if (activeSort === 'earliest') return a.leg2.arrivalTime.localeCompare(b.leg2.arrivalTime);
-        // Best: lowest layover with reasonable duration
+        if (activeSort === 'cheapest') {
+          if (a.totalFare == null && b.totalFare == null) return 0;
+          if (a.totalFare == null) return 1;
+          if (b.totalFare == null) return -1;
+          return a.totalFare - b.totalFare;
+        }
+        if (activeSort === 'fastest') {
+          if (!a.totalDurationMinutes && !b.totalDurationMinutes) return 0;
+          if (!a.totalDurationMinutes) return 1;
+          if (!b.totalDurationMinutes) return -1;
+          return a.totalDurationMinutes - b.totalDurationMinutes;
+        }
+        if (activeSort === 'earliest') {
+          return a.leg2.arrivalTime.localeCompare(b.leg2.arrivalTime);
+        }
         return a.totalDurationMinutes - b.totalDurationMinutes;
       });
-    function con() {}
-    con.fare = (c: { totalFare: number | null }) => c.totalFare || 0;
   }, [journeyData?.connectingAlternatives, filters, activeSort]);
 
   // Counts for tabs
@@ -324,7 +443,7 @@ export const AlternativesClient: React.FC = () => {
             date={journeyData.query?.date || searchData.date}
             travelClass={journeyData.query?.class || searchData.travelClass}
             trainName={`${journeyData.originStation.name} → ${journeyData.destinationStation.name} Corridor`}
-            onRefresh={() => fetchAlternatives(searchData, true)}
+            onRefresh={handleRefresh}
             isRefreshing={isRefreshing}
           />
         )}
@@ -344,7 +463,10 @@ export const AlternativesClient: React.FC = () => {
           {/* Right Column: Tabs & Cards (9 cols) */}
           <div className="lg:col-span-9 flex flex-col gap-4">
             {/* Functional Category Tabs */}
-            <div className="flex flex-wrap items-center gap-2 border-b border-border pb-2" role="tablist">
+            <div
+              className="flex flex-wrap items-center gap-2 border-b border-border pb-2"
+              role="tablist"
+            >
               {/* Tab 1: Same Train Alternative */}
               <button
                 type="button"
@@ -399,12 +521,31 @@ export const AlternativesClient: React.FC = () => {
             </div>
 
             {/* Results Display */}
-            {isLoading ? (
+            {!journeyData && !isLoading && !error ? (
+              /* P0 Initial State: Empty origin/destination with informative guidance */
+              <div className="w-full bg-surface rounded-3xl p-8 sm:p-12 border border-border shadow-xs flex flex-col items-center justify-center text-center gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-surface-container flex items-center justify-center text-text text-2xl">
+                  <span className="material-symbols-outlined text-[32px]">alt_route</span>
+                </div>
+                <div className="max-w-md">
+                  <h3 className="text-base font-bold text-text">
+                    Plan Your Journey Alternatives
+                  </h3>
+                  <p className="text-xs text-text-secondary mt-1.5 leading-relaxed">
+                    Enter an origin and destination station above to discover candidate same-train quota allocations, alternative direct express services, and verified connection hubs.
+                  </p>
+                </div>
+              </div>
+            ) : isLoading ? (
               <SkeletonLoader />
             ) : error ? (
               <ErrorState
                 message={error}
-                onRetry={() => fetchAlternatives(searchData)}
+                onRetry={() => {
+                  if (searchData.originCode && searchData.destinationCode) {
+                    handleSearch(searchData);
+                  }
+                }}
               />
             ) : (
               <>

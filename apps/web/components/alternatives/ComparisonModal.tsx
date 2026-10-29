@@ -116,7 +116,9 @@ export const ComparisonModal: React.FC<ComparisonModalProps> = ({
                         if (m.key === 'fare') {
                           content = (
                             <span className="font-extrabold text-emerald-700 dark:text-emerald-400">
-                              {formatCurrency(item.fare)}
+                              {typeof item.fare === 'number'
+                                ? formatCurrency(item.fare)
+                                : String(item.fare || 'Fare Unavailable')}
                             </span>
                           );
                         } else if (m.key === 'route') {

@@ -57,21 +57,42 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
   const [originInput, setOriginInput] = useState(
     initialData.originName
       ? `${initialData.originName} (${initialData.originCode})`
-      : initialData.originCode
+      : initialData.originCode || ''
   );
-  const [originCode, setOriginCode] = useState(initialData.originCode);
-  const [originName, setOriginName] = useState(initialData.originName);
+  const [originCode, setOriginCode] = useState(initialData.originCode || '');
+  const [originName, setOriginName] = useState(initialData.originName || '');
 
   const [destInput, setDestInput] = useState(
     initialData.destinationName
       ? `${initialData.destinationName} (${initialData.destinationCode})`
-      : initialData.destinationCode
+      : initialData.destinationCode || ''
   );
-  const [destCode, setDestCode] = useState(initialData.destinationCode);
-  const [destName, setDestName] = useState(initialData.destinationName);
+  const [destCode, setDestCode] = useState(initialData.destinationCode || '');
+  const [destName, setDestName] = useState(initialData.destinationName || '');
 
   const [date, setDate] = useState(initialData.date || getTodayIST());
   const [travelClass, setTravelClass] = useState(initialData.travelClass || 'ALL');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Sync internal form state when initialData changes
+  useEffect(() => {
+    setOriginCode(initialData.originCode || '');
+    setOriginName(initialData.originName || '');
+    setOriginInput(
+      initialData.originName
+        ? `${initialData.originName} (${initialData.originCode})`
+        : initialData.originCode || ''
+    );
+    setDestCode(initialData.destinationCode || '');
+    setDestName(initialData.destinationName || '');
+    setDestInput(
+      initialData.destinationName
+        ? `${initialData.destinationName} (${initialData.destinationCode})`
+        : initialData.destinationCode || ''
+    );
+    if (initialData.date) setDate(initialData.date);
+    if (initialData.travelClass) setTravelClass(initialData.travelClass);
+  }, [initialData]);
 
   // Suggestions state
   const [originSuggestions, setOriginSuggestions] = useState<StationSuggestion[]>([]);
@@ -107,12 +128,20 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
 
     const timer = setTimeout(async () => {
       try {
-        const res = await apiFetch<{ stations: StationSuggestion[] }>(
+        const res = await apiFetch<any>(
           `/api/v1/stations/search?q=${encodeURIComponent(q)}`,
-          { timeoutMs: 3000 }
+          { timeoutMs: 4000 }
         );
-        if (res?.stations && res.stations.length > 0) {
-          setOriginSuggestions(res.stations);
+        const stations: StationSuggestion[] = Array.isArray(res?.data)
+          ? res.data
+          : Array.isArray(res?.stations)
+          ? res.stations
+          : Array.isArray(res)
+          ? res
+          : [];
+
+        if (stations.length > 0) {
+          setOriginSuggestions(stations);
         } else {
           // Local fallback filter
           const filtered = DEFAULT_STATIONS.filter(
@@ -147,12 +176,20 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
 
     const timer = setTimeout(async () => {
       try {
-        const res = await apiFetch<{ stations: StationSuggestion[] }>(
+        const res = await apiFetch<any>(
           `/api/v1/stations/search?q=${encodeURIComponent(q)}`,
-          { timeoutMs: 3000 }
+          { timeoutMs: 4000 }
         );
-        if (res?.stations && res.stations.length > 0) {
-          setDestSuggestions(res.stations);
+        const stations: StationSuggestion[] = Array.isArray(res?.data)
+          ? res.data
+          : Array.isArray(res?.stations)
+          ? res.stations
+          : Array.isArray(res)
+          ? res
+          : [];
+
+        if (stations.length > 0) {
+          setDestSuggestions(stations);
         } else {
           const filtered = DEFAULT_STATIONS.filter(
             (s) =>
@@ -180,6 +217,7 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
     setOriginName(st.name);
     setOriginInput(`${st.name} (${st.code})`);
     setShowOriginMenu(false);
+    setValidationError(null);
   };
 
   const handleSelectDest = (st: StationSuggestion) => {
@@ -187,6 +225,7 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
     setDestName(st.name);
     setDestInput(`${st.name} (${st.code})`);
     setShowDestMenu(false);
+    setValidationError(null);
   };
 
   const [isSwapping, setIsSwapping] = useState(false);
@@ -206,6 +245,7 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
     setDestCode(tempCode);
     setDestName(tempName);
     setDestInput(tempInput);
+    setValidationError(null);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -224,7 +264,17 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
       finalDest = match ? match[1].toUpperCase() : destInput.trim().toUpperCase();
     }
 
-    if (!finalOrigin || !finalDest) return;
+    if (!finalOrigin || !finalDest) {
+      setValidationError('Please specify both an origin and destination station.');
+      return;
+    }
+
+    if (finalOrigin === finalDest) {
+      setValidationError('Origin and destination stations cannot be the same station.');
+      return;
+    }
+
+    setValidationError(null);
 
     onSearch({
       originCode: finalOrigin,
@@ -239,6 +289,12 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
   return (
     <div className="w-full rounded-2xl bg-surface border border-border p-4 sm:p-6 shadow-sm">
       <form onSubmit={handleSubmit}>
+        {validationError && (
+          <div className="mb-3.5 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 text-xs font-semibold flex items-center gap-2">
+            <span className="material-symbols-outlined text-base">error</span>
+            <span>{validationError}</span>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-end">
           {/* Origin Station */}
           <div className="md:col-span-3 flex flex-col gap-1.5 relative" ref={originRef}>

@@ -23,11 +23,14 @@ export const SameTrainCard: React.FC<SameTrainCardProps> = ({
     id: `st-${alternative.trainNumber}-${alternative.ticketedOrigin.code}`,
     name: `${alternative.trainNumber} ${alternative.trainName} (via ${alternative.ticketedOrigin.code})`,
     category: 'Same Train Alternative',
-    fare: alternative.fare || 0,
-    duration: `${formatDuration(alternative.totalJourneyMinutes)} (from ${alternative.intendedBoarding.code})`,
-    durationMinutes: alternative.totalJourneyMinutes,
+    fare: alternative.fare != null ? alternative.fare : 'Fare Unavailable',
+    duration:
+      alternative.totalJourneyMinutes > 0
+        ? `${formatDuration(alternative.totalJourneyMinutes)} (from ${alternative.intendedBoarding.code})`
+        : 'Schedule Pending',
+    durationMinutes: alternative.totalJourneyMinutes || 0,
     transfers: 0,
-    status: alternative.availabilityStatus || 'Available (GN Quota)',
+    status: alternative.availabilityStatus || 'Check IRCTC',
     routeSummary: `${alternative.ticketedOrigin.code} → [Board at ${alternative.intendedBoarding.code}] → ${alternative.ticketedDestination.code}`,
     departureTime: alternative.departureTimeBoarding,
     arrivalTime: alternative.arrivalTimeDestination,
@@ -54,9 +57,19 @@ export const SameTrainCard: React.FC<SameTrainCardProps> = ({
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-              {alternative.availabilityStatus || 'Available (GN Quota)'}
+            <span
+              className={`w-2 h-2 rounded-full ${
+                alternative.availabilityCategory === 'AVAILABLE'
+                  ? 'bg-emerald-500'
+                  : alternative.availabilityCategory === 'RAC'
+                  ? 'bg-amber-500'
+                  : alternative.availabilityCategory === 'WAITLISTED'
+                  ? 'bg-rose-500'
+                  : 'bg-text-tertiary'
+              }`}
+            />
+            <span className="text-xs font-semibold text-text-secondary">
+              {alternative.availabilityStatus || 'Check IRCTC'}
             </span>
           </div>
 
@@ -92,11 +105,22 @@ export const SameTrainCard: React.FC<SameTrainCardProps> = ({
         <div className="text-left sm:text-right">
           <div className="text-xs text-text-secondary">Effective Ticket Fare</div>
           <div className="text-base sm:text-lg font-extrabold text-text">
-            {formatCurrency(alternative.fare)}
-            {alternative.fareDifference && alternative.fareDifference > 0 && (
-              <span className="text-xs font-normal text-text-secondary ml-1">
-                (+{formatCurrency(alternative.fareDifference)} GN diff)
-              </span>
+            {alternative.fare != null ? (
+              <>
+                {formatCurrency(alternative.fare)}
+                {alternative.fareType === 'ESTIMATED' && (
+                  <span className="text-[10px] font-semibold text-text-secondary uppercase ml-1 px-1.5 py-0.5 rounded bg-surface-container">
+                    Est.
+                  </span>
+                )}
+                {alternative.fareDifference != null && alternative.fareDifference > 0 && (
+                  <span className="text-xs font-normal text-text-secondary ml-1">
+                    (+{formatCurrency(alternative.fareDifference)} GN diff)
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-xs font-semibold text-text-secondary">Fare Unavailable</span>
             )}
           </div>
         </div>
@@ -203,7 +227,7 @@ export const SameTrainCard: React.FC<SameTrainCardProps> = ({
             Paper Delta
           </span>
           <span className="text-xs font-bold text-text mt-0.5">
-            +{alternative.additionalDistanceKm} km
+            {alternative.additionalDistanceKm != null ? `+${alternative.additionalDistanceKm} km` : 'Pending'}
           </span>
           <span className="text-[10px] text-text-secondary mt-0.5">
             Paper Origin Buffer
@@ -215,7 +239,7 @@ export const SameTrainCard: React.FC<SameTrainCardProps> = ({
             Fare Difference
           </span>
           <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">
-            +{formatCurrency(alternative.fareDifference)}
+            {alternative.fareDifference != null ? `+${formatCurrency(alternative.fareDifference)}` : '—'}
           </span>
           <span className="text-[10px] text-text-secondary mt-0.5">Unlocks General Quota</span>
         </div>
@@ -225,7 +249,9 @@ export const SameTrainCard: React.FC<SameTrainCardProps> = ({
             Travel Duration
           </span>
           <span className="text-xs font-bold text-text mt-0.5">
-            {formatDuration(alternative.totalJourneyMinutes)}
+            {alternative.totalJourneyMinutes > 0
+              ? formatDuration(alternative.totalJourneyMinutes)
+              : 'Schedule Pending'}
           </span>
           <span className="text-[10px] text-text-secondary mt-0.5">From intended boarding</span>
         </div>

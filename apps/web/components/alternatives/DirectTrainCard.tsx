@@ -23,9 +23,11 @@ export const DirectTrainCard: React.FC<DirectTrainCardProps> = ({
     id: `dt-${train.trainNumber}`,
     name: `${train.trainNumber} ${train.trainName}`,
     category: 'Alternative Direct Train',
-    fare: train.fare || 0,
-    duration: train.durationFormatted || formatDuration(train.durationMinutes),
-    durationMinutes: train.durationMinutes,
+    fare: train.fare != null ? train.fare : 'Fare Unavailable',
+    duration:
+      train.durationFormatted ||
+      (train.durationMinutes > 0 ? formatDuration(train.durationMinutes) : 'Schedule Pending'),
+    durationMinutes: train.durationMinutes || 0,
     transfers: 0,
     status: train.availabilityStatus || 'Check PRS Live',
     routeSummary: `${train.origin.code} → ${train.destination.code} (Direct)`,
@@ -59,8 +61,18 @@ export const DirectTrainCard: React.FC<DirectTrainCardProps> = ({
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-blue-500" />
-            <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                train.availabilityCategory === 'AVAILABLE'
+                  ? 'bg-emerald-500'
+                  : train.availabilityCategory === 'RAC'
+                  ? 'bg-amber-500'
+                  : train.availabilityCategory === 'WAITLISTED'
+                  ? 'bg-rose-500'
+                  : 'bg-text-tertiary'
+              }`}
+            />
+            <span className="text-xs font-semibold text-text-secondary">
               {train.availabilityStatus || 'Check PRS Live'}
             </span>
           </div>
@@ -85,14 +97,28 @@ export const DirectTrainCard: React.FC<DirectTrainCardProps> = ({
             {train.trainNumber} {train.trainName}
           </h3>
           <p className="text-xs text-text-secondary mt-1">
-            {train.scheduledServiceText || 'Daily Scheduled Service'} · Distance: {train.distanceKm} km
+            {train.scheduledServiceText || 'Daily Scheduled Service'} · Distance:{' '}
+            {train.distanceKm != null ? `${train.distanceKm} km` : 'Distance Pending'}
           </p>
         </div>
 
         <div className="text-left sm:text-right">
-          <div className="text-xs text-text-secondary">Indicative Base Fare</div>
+          <div className="text-xs text-text-secondary">
+            {train.fareType === 'ESTIMATED' ? 'Estimated Base Fare' : 'Indicative Base Fare'}
+          </div>
           <div className="text-base sm:text-lg font-extrabold text-text">
-            {formatCurrency(train.fare)}
+            {train.fare != null ? (
+              <>
+                {formatCurrency(train.fare)}
+                {train.fareType === 'ESTIMATED' && (
+                  <span className="text-[10px] font-semibold text-text-secondary uppercase ml-1 px-1.5 py-0.5 rounded bg-surface-container">
+                    Est.
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-xs font-semibold text-text-secondary">Fare Unavailable</span>
+            )}
           </div>
         </div>
       </div>

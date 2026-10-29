@@ -308,6 +308,16 @@ export interface GeoBounds {
 // Journey Alternatives Domain Types
 export type JourneyCategoryType = 'SAME_TRAIN' | 'DIRECT' | 'CONNECTING';
 
+export type FareType = 'QUOTED' | 'ESTIMATED' | 'UNAVAILABLE';
+
+export type AvailabilityCategory =
+  | 'AVAILABLE'
+  | 'RAC'
+  | 'WAITLISTED'
+  | 'NOT_CHECKED'
+  | 'UNAVAILABLE'
+  | 'UNKNOWN';
+
 export interface StationInfo {
   code: string;
   name: string;
@@ -331,16 +341,18 @@ export interface SameTrainAlternative {
   intendedDate: string;
   ticketedStartDate: string;
   destinationArrivalDate: string;
-  additionalDistanceKm: number;
-  additionalTimeMinutes: number;
+  additionalDistanceKm: number | null;
+  additionalTimeMinutes: number | null;
   totalJourneyMinutes: number;
-  paperJourneyMinutes: number;
+  paperJourneyMinutes: number | null;
   fare: number | null;
+  fareType: FareType;
   baseFareForIntended: number | null;
   fareDifference: number | null;
   travelClass: string;
   quota: string;
   availabilityStatus: string;
+  availabilityCategory: AvailabilityCategory;
   availabilityAvailable: boolean;
   intermediateStations: string[];
   advisoryText: string;
@@ -363,11 +375,13 @@ export interface DirectTrainAlternative {
   arrivalDate: string;
   durationMinutes: number;
   durationFormatted: string;
-  distanceKm: number;
+  distanceKm: number | null;
   totalHaltsBetween?: number;
   fare: number | null;
+  fareType: FareType;
   travelClass: string;
   availabilityStatus: string;
+  availabilityCategory: AvailabilityCategory;
   availabilityAvailable: boolean;
   scheduledServiceText: string;
   isFaster?: boolean;
@@ -387,10 +401,12 @@ export interface ConnectingLeg {
   arrivalDate: string;
   durationMinutes: number;
   durationFormatted: string;
-  distanceKm?: number;
+  distanceKm?: number | null;
   fare: number | null;
+  fareType: FareType;
   travelClass: string;
   availabilityStatus: string;
+  availabilityCategory: AvailabilityCategory;
 }
 
 export interface ConnectingAlternative {
@@ -407,9 +423,11 @@ export interface ConnectingAlternative {
   totalDurationMinutes: number;
   totalDurationFormatted: string;
   totalFare: number | null;
+  fareType: FareType;
   transfersCount: number;
   layoverLocationNote?: string;
   availabilityStatus: string;
+  availabilityCategory: AvailabilityCategory;
   advisoryText: string;
   freshness: string;
 }
@@ -422,6 +440,7 @@ export interface AlternativeJourneysResult {
     class: string;
     originalTrainNumber?: string;
   };
+  isRouteOnly: boolean;
   originStation: StationInfo;
   destinationStation: StationInfo;
   sameTrainAlternatives: SameTrainAlternative[];

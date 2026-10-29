@@ -23,11 +23,13 @@ export const ConnectingTrainCard: React.FC<ConnectingTrainCardProps> = ({
     id: `con-${connection.interchangeStation.code}-${connection.leg1.trainNumber}-${connection.leg2.trainNumber}`,
     name: `${connection.leg1.trainNumber} + ${connection.leg2.trainNumber} (via ${connection.interchangeStation.code})`,
     category: 'Connecting Journey',
-    fare: connection.totalFare || 0,
-    duration: connection.totalDurationFormatted || formatDuration(connection.totalDurationMinutes),
-    durationMinutes: connection.totalDurationMinutes,
+    fare: connection.totalFare != null ? connection.totalFare : 'Fare Unavailable',
+    duration:
+      connection.totalDurationFormatted ||
+      (connection.totalDurationMinutes > 0 ? formatDuration(connection.totalDurationMinutes) : 'Schedule Pending'),
+    durationMinutes: connection.totalDurationMinutes || 0,
     transfers: connection.transfersCount || 1,
-    status: connection.availabilityStatus || 'Verified Connection',
+    status: connection.availabilityStatus || 'Separate Booking Required',
     routeSummary: `${connection.origin.code} → ${connection.interchangeStation.code} (Transfer ${connection.transferLayoverFormatted || formatDuration(connection.transferLayoverMinutes)}) → ${connection.destination.code}`,
     departureTime: connection.leg1.departureTime,
     arrivalTime: connection.leg2.arrivalTime,
@@ -59,9 +61,19 @@ export const ConnectingTrainCard: React.FC<ConnectingTrainCardProps> = ({
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-              {connection.availabilityStatus || 'Verified Connection'}
+            <span
+              className={`w-2 h-2 rounded-full ${
+                connection.availabilityCategory === 'AVAILABLE'
+                  ? 'bg-emerald-500'
+                  : connection.availabilityCategory === 'RAC'
+                  ? 'bg-amber-500'
+                  : connection.availabilityCategory === 'WAITLISTED'
+                  ? 'bg-rose-500'
+                  : 'bg-text-tertiary'
+              }`}
+            />
+            <span className="text-xs font-semibold text-text-secondary">
+              {connection.availabilityStatus || 'Separate Booking Required'}
             </span>
           </div>
 
@@ -83,7 +95,11 @@ export const ConnectingTrainCard: React.FC<ConnectingTrainCardProps> = ({
         <div className="flex items-center gap-2">
           <span className="text-xs text-text-secondary">Composite Journey:</span>
           <span className="text-sm font-bold text-text">
-            {connection.totalDurationFormatted || formatDuration(connection.totalDurationMinutes)} Total Travel Time
+            {connection.totalDurationFormatted ||
+              (connection.totalDurationMinutes > 0
+                ? formatDuration(connection.totalDurationMinutes)
+                : 'Schedule Pending')}{' '}
+            Total Travel Time
           </span>
           <span className="text-xs text-text-tertiary">
             (Includes {connection.transferLayoverFormatted || formatDuration(connection.transferLayoverMinutes)} layover)
@@ -91,9 +107,24 @@ export const ConnectingTrainCard: React.FC<ConnectingTrainCardProps> = ({
         </div>
 
         <div className="text-left sm:text-right">
-          <div className="text-xs text-text-secondary">Combined Fare (Leg 1 + Leg 2)</div>
+          <div className="text-xs text-text-secondary">
+            {connection.fareType === 'ESTIMATED'
+              ? 'Estimated Combined Fare'
+              : 'Combined Fare (Leg 1 + Leg 2)'}
+          </div>
           <div className="text-base sm:text-lg font-extrabold text-text">
-            {formatCurrency(connection.totalFare)}
+            {connection.totalFare != null ? (
+              <>
+                {formatCurrency(connection.totalFare)}
+                {connection.fareType === 'ESTIMATED' && (
+                  <span className="text-[10px] font-semibold text-text-secondary uppercase ml-1 px-1.5 py-0.5 rounded bg-surface-container">
+                    Est.
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-xs font-semibold text-text-secondary">Combined Fare Unavailable</span>
+            )}
           </div>
         </div>
       </div>

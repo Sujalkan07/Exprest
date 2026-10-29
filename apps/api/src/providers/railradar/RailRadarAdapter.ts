@@ -1,4 +1,4 @@
-import { Train, JourneyRun, LivePosition, TrainStop, JourneyStatus, PnrStatusResult, PassengerStatus, CoachRakeItem, PnrLiveTrainStatus, StationInfo } from '@exprest/types';
+import { Train, JourneyRun, LivePosition, TrainStop, JourneyStatus, PnrStatusResult, PassengerStatus, CoachRakeItem, PnrLiveTrainStatus, StationInfo, AvailabilityCategory } from '@exprest/types';
 import { AppError } from '../../common/errors/AppError.js';
 
 export interface TrainProvider {
@@ -11,6 +11,7 @@ export interface TrainProvider {
   getRouteGeometry(trainNumber: string): Promise<{ type: 'LineString'; coordinates: [number, number][] } | null>;
   getPnrStatus(pnr: string): Promise<PnrStatusResult>;
   getTrainFare(trainNumber: string, fromStation: string, toStation: string, journeyDate?: string, classCode?: string, quota?: string): Promise<any>;
+  getSeatAvailability(trainNumber: string, fromStation: string, toStation: string, journeyDate: string, classCode?: string, quota?: string): Promise<any>;
 }
 
 const BASE_URL = 'https://railradar.in/api/v1';
@@ -979,6 +980,116 @@ export class RailRadarAdapter implements TrainProvider {
       breakdown,
       source: 'telescopic_fallback',
       generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async getSeatAvailability(
+    trainNumber: string,
+    fromStation: string,
+    toStation: string,
+    journeyDate: string,
+    classCode = '3A',
+    quota = 'GN'
+  ): Promise<{
+    trainNumber: string;
+    fromStation: string;
+    toStation: string;
+    journeyDate: string;
+    travelClass: string;
+    quota: string;
+    category: AvailabilityCategory;
+    statusText: string;
+    isAvailable: boolean;
+    confirmedSeats?: number | null;
+    racNumber?: number | null;
+    waitlistNumber?: number | null;
+    source: 'prs' | 'unverified';
+  }> {
+    const cleanTrain = (trainNumber || '').replace(/\D/g, '').trim();
+    const cleanFrom = (fromStation || '').trim().toUpperCase();
+    const cleanTo = (toStation || '').trim().toUpperCase();
+    const normClass = RailRadarAdapter.normalizeClassCode(classCode);
+    const date = RailRadarAdapter.normalizeFareDate(journeyDate);
+
+    if (!cleanTrain || !cleanFrom || !cleanTo) {
+      return {
+        trainNumber: cleanTrain,
+        fromStation: cleanFrom,
+        toStation: cleanTo,
+        journeyDate: date,
+        travelClass: normClass,
+        quota,
+        category: 'NOT_CHECKED',
+        statusText: 'Check Live PRS on IRCTC',
+        isAvailable: false,
+        source: 'unverified',
+      };
+    }
+
+    try {
+      const url = `${BASE_URL}/trains/${cleanTrain}/availability?from=${encodeURIComponent(cleanFrom)}&to=${encodeURIComponent(cleanTo)}&journeyDate=${encodeURIComponent(date)}&classCode=${encodeURIComponent(normClass)}&quota=${encodeURIComponent(quota)}`;
+      const res = await fetch(this.buildUrl(url), {
+        headers: this.headers,
+        signal: AbortSignal.timeout(6_000),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        const d = json?.data;
+        if (d) {
+          const rawStatus = String(d.status || d.currentStatus || d.availabilityStatus || '').trim().toUpperCase();
+          let category: AvailabilityCategory = 'UNKNOWN';
+          let isAvail = false;
+
+          if (rawStatus.includes('AVAILABLE') || rawStatus.includes('AVBL') || rawStatus.includes('CURR_AVBL')) {
+            category = 'AVAILABLE';
+            isAvail = true;
+          } else if (rawStatus.includes('RAC')) {
+            category = 'RAC';
+            isAvail = true;
+          } else if (rawStatus.includes('WL') || rawStatus.includes('WAIT')) {
+            category = 'WAITLISTED';
+            isAvail = false;
+          } else if (rawStatus.includes('REGRET') || rawStatus.includes('NOT AVAILABLE')) {
+            category = 'UNAVAILABLE';
+            isAvail = false;
+          } else if (rawStatus) {
+            category = 'UNKNOWN';
+            isAvail = false;
+          }
+
+          return {
+            trainNumber: cleanTrain,
+            fromStation: cleanFrom,
+            toStation: cleanTo,
+            journeyDate: date,
+            travelClass: normClass,
+            quota,
+            category,
+            statusText: d.status || d.currentStatus || (isAvail ? 'Available' : 'Check PRS'),
+            isAvailable: isAvail,
+            confirmedSeats: typeof d.availableSeats === 'number' ? d.availableSeats : undefined,
+            racNumber: typeof d.racNumber === 'number' ? d.racNumber : undefined,
+            waitlistNumber: typeof d.waitlistNumber === 'number' ? d.waitlistNumber : undefined,
+            source: 'prs',
+          };
+        }
+      }
+    } catch {
+      // Endpoint may not be provisioned or failed
+    }
+
+    return {
+      trainNumber: cleanTrain,
+      fromStation: cleanFrom,
+      toStation: cleanTo,
+      journeyDate: date,
+      travelClass: normClass,
+      quota,
+      category: 'NOT_CHECKED',
+      statusText: 'Check Live PRS on IRCTC',
+      isAvailable: false,
+      source: 'unverified',
     };
   }
 

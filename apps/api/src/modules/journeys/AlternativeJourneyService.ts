@@ -1,8 +1,10 @@
 import {
   AlternativeJourneysResult,
+  AvailabilityCategory,
   ConnectingAlternative,
   ConnectingLeg,
   DirectTrainAlternative,
+  FareType,
   SameTrainAlternative,
   StationInfo,
 } from '@exprest/types';
@@ -14,7 +16,7 @@ function getTodayIst(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 }
 
-function parseTimeToMinutes(timeStr: string): number {
+function parseTimeToMinutes(timeStr?: string | null): number {
   if (!timeStr) return 0;
   const parts = timeStr.trim().split(':');
   const h = parseInt(parts[0], 10) || 0;
@@ -22,9 +24,26 @@ function parseTimeToMinutes(timeStr: string): number {
   return h * 60 + m;
 }
 
-function formatMinutes(mins: number): string {
+function isValidTimeString(timeStr?: string | null): boolean {
+  if (!timeStr) return false;
+  return /^\d{1,2}:\d{2}$/.test(timeStr.trim());
+}
+
+function computeDurationMins(depStr: string, arrStr: string): number {
+  const depM = parseTimeToMinutes(depStr);
+  const arrM = parseTimeToMinutes(arrStr);
+  if (arrM >= depM) {
+    return arrM - depM;
+  }
+  return 1440 - depM + arrM;
+}
+
+function formatMinutes(mins: number | null | undefined): string {
+  if (mins == null || isNaN(mins) || mins <= 0) return 'Schedule Pending';
   const h = Math.floor(mins / 60);
   const m = Math.round(mins % 60);
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
   return `${h}h ${m < 10 ? '0' : ''}${m}m`;
 }
 
@@ -66,7 +85,8 @@ export class AlternativeJourneyService {
     }
 
     const todayIst = getTodayIst();
-    const date = journeyDate && isValidCalendarDate(journeyDate) ? journeyDate : todayIst;
+    const isExplicitDate = Boolean(journeyDate && isValidCalendarDate(journeyDate));
+    const date = isExplicitDate ? journeyDate! : todayIst;
 
     // 1. Resolve Origin and Destination station metadata
     const [originSearchResults, destSearchResults] = await Promise.all([
@@ -95,43 +115,59 @@ export class AlternativeJourneyService {
       };
 
     // 2. Fetch direct trains between stations
-    let directBetweenData = await this.railRadar
+    // Note: Never fallback to date-less query that attaches user's date to trains that don't run on that date
+    const directBetweenData = await this.railRadar
       .getTrainsBetween(from, to, { byCity: true, date })
       .catch(() => null);
 
-    let rawDirectTrains: any[] = directBetweenData?.trains || [];
-    if (rawDirectTrains.length === 0) {
-      // Fallback: query without date in case the service runs on specific days of week
-      directBetweenData = await this.railRadar
-        .getTrainsBetween(from, to, { byCity: true })
-        .catch(() => null);
-      rawDirectTrains = directBetweenData?.trains || [];
-    }
+    const rawDirectTrains: any[] = directBetweenData?.trains || [];
 
     // 3. Category 2: Alternative Direct Trains
     const directAlternatives: DirectTrainAlternative[] = [];
     for (let i = 0; i < rawDirectTrains.length; i++) {
       const item = rawDirectTrains[i];
       const t = item.train || {};
-      const num = String(t.number || item.number || '');
+      const num = String(t.number || item.number || '').trim();
       const name = t.name || item.name || `Train ${num}`;
       const type = t.type || item.type || 'Superfast Express';
 
-      const depTime = item.from?.departure || '00:00';
-      const arrTime = item.to?.arrival || '00:00';
-      const durationMins = Number(item.duration) || 0;
-      const distance = Number(item.distance) || 0;
-      const haltsBetween = Number(item.totalHaltsBetween) || undefined;
+      const depTime = item.from?.departure || item.from?.scheduledDeparture || '';
+      const arrTime = item.to?.arrival || item.to?.scheduledArrival || '';
+      const durationMins = typeof item.duration === 'number' && item.duration > 0
+        ? item.duration
+        : (isValidTimeString(depTime) && isValidTimeString(arrTime) ? computeDurationMins(depTime, arrTime) : 0);
+      const distance = typeof item.distance === 'number' && item.distance > 0 ? item.distance : null;
+      const haltsBetween = typeof item.totalHaltsBetween === 'number' ? item.totalHaltsBetween : undefined;
 
       // Calculate fare for direct journey
       let directFare: number | null = null;
+      let directFareType: FareType = 'UNAVAILABLE';
       try {
         const fareData = await this.railRadar.getTrainFare(num, from, to, date, classCode, quota);
-        if (fareData?.breakdown?.totalFare) {
+        if (fareData?.breakdown?.totalFare != null) {
           directFare = Number(fareData.breakdown.totalFare);
+          directFareType = fareData.source === 'prs' ? 'QUOTED' : 'ESTIMATED';
         }
       } catch {
-        // Fare fallback calculation is built into RailRadarAdapter
+        directFare = null;
+        directFareType = 'UNAVAILABLE';
+      }
+
+      // Check seat availability truthfully
+      let availCategory: AvailabilityCategory = 'NOT_CHECKED';
+      let availStatus = 'Check PRS Live';
+      let isAvail = false;
+      try {
+        const availRes = await this.railRadar.getSeatAvailability(num, from, to, date, classCode, quota);
+        if (availRes) {
+          availCategory = availRes.category;
+          availStatus = availRes.statusText;
+          isAvail = availRes.isAvailable;
+        }
+      } catch {
+        availCategory = 'NOT_CHECKED';
+        availStatus = 'Check PRS Live';
+        isAvail = false;
       }
 
       directAlternatives.push({
@@ -150,18 +186,20 @@ export class AlternativeJourneyService {
           name: item.to?.name || destinationStation.name,
           city: item.to?.city || destinationStation.city,
         },
-        departureTime: depTime,
-        arrivalTime: arrTime,
+        departureTime: depTime || '--:--',
+        arrivalTime: arrTime || '--:--',
         departureDate: date,
-        arrivalDate: date, // Calculated by timetable
+        arrivalDate: date,
         durationMinutes: durationMins,
         durationFormatted: formatMinutes(durationMins),
         distanceKm: distance,
         totalHaltsBetween: haltsBetween,
         fare: directFare,
+        fareType: directFareType,
         travelClass: classCode,
-        availabilityStatus: 'RAC / Availability via IRCTC',
-        availabilityAvailable: true,
+        availabilityStatus: availStatus,
+        availabilityCategory: availCategory,
+        availabilityAvailable: isAvail,
         scheduledServiceText: `Regular service connecting ${from} to ${to}`,
         isFaster: false,
         isLive: false,
@@ -171,23 +209,31 @@ export class AlternativeJourneyService {
 
     // Sort direct alternatives by duration to mark faster ones
     if (directAlternatives.length > 1) {
-      directAlternatives.sort((a, b) => a.durationMinutes - b.durationMinutes);
-      directAlternatives[0].isFaster = true;
+      const validDurations = directAlternatives.filter((d) => d.durationMinutes > 0);
+      if (validDurations.length > 1) {
+        validDurations.sort((a, b) => a.durationMinutes - b.durationMinutes);
+        validDurations[0].isFaster = true;
+      }
     }
 
     // 4. Category 1: Same Train Alternative Segment
-    // Select candidate train: preferredTrainNumber or the first superfast train
+    // If preferredTrainNumber is provided, inspect that specific train.
+    // If not provided, inspect candidate direct trains (up to 3) to see if any have prior origins on their route.
     const sameTrainAlternatives: SameTrainAlternative[] = [];
-    let candidateTrainNum = preferredTrainNumber;
-    if (!candidateTrainNum && rawDirectTrains.length > 0) {
-      // Find 12512 or first superfast train
-      const found = rawDirectTrains.find((r) => String(r.train?.number).startsWith('12512')) ||
-        rawDirectTrains.find((r) => String(r.train?.type || '').toLowerCase().includes('superfast')) ||
-        rawDirectTrains[0];
-      candidateTrainNum = String(found.train?.number || found.number || '');
+    const candidateTrainNums: string[] = [];
+
+    if (preferredTrainNumber) {
+      candidateTrainNums.push(preferredTrainNumber.trim());
+    } else if (rawDirectTrains.length > 0) {
+      for (const t of rawDirectTrains.slice(0, 3)) {
+        const num = String(t.train?.number || t.number || '').trim();
+        if (num && !candidateTrainNums.includes(num)) {
+          candidateTrainNums.push(num);
+        }
+      }
     }
 
-    if (candidateTrainNum) {
+    for (const candidateTrainNum of candidateTrainNums) {
       try {
         const trainDetails = await this.railRadar.getTrainDetails(candidateTrainNum);
         const routeStops: any[] = trainDetails?.route || trainDetails?.stops || [];
@@ -202,7 +248,7 @@ export class AlternativeJourneyService {
           );
 
           if (fromIdx > 0 && toIdx > fromIdx) {
-            // Station starts earlier than intended boarding! Candidate prior origin is routeStops[0]
+            // Station starts earlier than intended boarding!
             const priorOriginStop = routeStops[0];
             const boardingStop = routeStops[fromIdx];
             const destStop = routeStops[toIdx];
@@ -210,24 +256,43 @@ export class AlternativeJourneyService {
             const priorOriginCode = priorOriginStop.station?.code || priorOriginStop.stationCode;
             const priorOriginName = priorOriginStop.station?.name || priorOriginStop.stationName || priorOriginCode;
 
-            const distPriorToDest = (destStop.distance || 0) - (priorOriginStop.distance || 0);
-            const distBoardingToDest = (destStop.distance || 0) - (boardingStop.distance || 0);
-            const additionalDist = Math.max(0, distPriorToDest - distBoardingToDest);
+            const distPriorToDest =
+              typeof destStop.distance === 'number' && typeof priorOriginStop.distance === 'number'
+                ? destStop.distance - priorOriginStop.distance
+                : null;
+            const distBoardingToDest =
+              typeof destStop.distance === 'number' && typeof boardingStop.distance === 'number'
+                ? destStop.distance - boardingStop.distance
+                : null;
+            const additionalDist =
+              distPriorToDest != null && distBoardingToDest != null && distPriorToDest > distBoardingToDest
+                ? distPriorToDest - distBoardingToDest
+                : null;
 
-            const depTimePrior = priorOriginStop.departure || '23:15';
-            const depTimeBoarding = boardingStop.departure || boardingStop.arrival || '06:40';
-            const arrTimeDest = destStop.arrival || '07:15';
+            const depTimePrior = priorOriginStop.departure || priorOriginStop.arrival || '--:--';
+            const depTimeBoarding = boardingStop.departure || boardingStop.arrival || '--:--';
+            const arrTimeDest = destStop.arrival || destStop.departure || '--:--';
 
-            // Calculate paper travel minutes vs intended travel minutes
-            const paperDurationMins = Math.max(
-              120,
-              (Number(trainDetails?.duration) || 0) || Math.round(distPriorToDest / 60) * 60
-            );
-            const intendedDurationMins = Math.max(
-              60,
-              paperDurationMins - Math.round(additionalDist / 60) * 60
-            );
-            const additionalTimeMins = Math.max(0, paperDurationMins - intendedDurationMins);
+            // Calculate durations without hardcoded fallbacks
+            let paperDurationMins: number | null = null;
+            let intendedDurationMins = 0;
+            let additionalTimeMins: number | null = null;
+
+            if (isValidTimeString(depTimePrior) && isValidTimeString(arrTimeDest)) {
+              paperDurationMins = computeDurationMins(depTimePrior, arrTimeDest);
+            } else if (Number(trainDetails?.duration) > 0) {
+              paperDurationMins = Number(trainDetails.duration);
+            }
+
+            if (isValidTimeString(depTimeBoarding) && isValidTimeString(arrTimeDest)) {
+              intendedDurationMins = computeDurationMins(depTimeBoarding, arrTimeDest);
+            } else if (paperDurationMins != null && distPriorToDest && distBoardingToDest) {
+              intendedDurationMins = Math.round((paperDurationMins * distBoardingToDest) / distPriorToDest);
+            }
+
+            if (paperDurationMins != null && intendedDurationMins > 0 && paperDurationMins > intendedDurationMins) {
+              additionalTimeMins = paperDurationMins - intendedDurationMins;
+            }
 
             // Fetch actual fares for extended segment vs intended segment
             const [fareExtended, fareIntended] = await Promise.all([
@@ -239,9 +304,38 @@ export class AlternativeJourneyService {
                 .catch(() => null),
             ]);
 
-            const extendedFareVal = Number(fareExtended?.breakdown?.totalFare) || 2185;
-            const intendedFareVal = Number(fareIntended?.breakdown?.totalFare) || 1840;
-            const fareDiff = Math.max(0, extendedFareVal - intendedFareVal);
+            const extendedFareVal = fareExtended?.breakdown?.totalFare != null
+              ? Number(fareExtended.breakdown.totalFare)
+              : null;
+            const intendedFareVal = fareIntended?.breakdown?.totalFare != null
+              ? Number(fareIntended.breakdown.totalFare)
+              : null;
+            const fareDiff = extendedFareVal != null && intendedFareVal != null
+              ? Math.max(0, extendedFareVal - intendedFareVal)
+              : null;
+            const fareType: FareType = fareExtended?.source === 'prs'
+              ? 'QUOTED'
+              : (extendedFareVal != null ? 'ESTIMATED' : 'UNAVAILABLE');
+
+            // Seat availability
+            let stAvailCategory: AvailabilityCategory = 'NOT_CHECKED';
+            let stAvailStatus = 'Candidate General Quota (Check IRCTC)';
+            let stIsAvail = false;
+            try {
+              const availRes = await this.railRadar.getSeatAvailability(
+                candidateTrainNum,
+                priorOriginCode,
+                to,
+                date,
+                classCode,
+                quota
+              );
+              if (availRes) {
+                stAvailCategory = availRes.category;
+                stAvailStatus = availRes.statusText;
+                stIsAvail = availRes.isAvailable;
+              }
+            } catch {}
 
             // Intermediate halts between boarding and destination
             const intermediateHalts = routeStops
@@ -250,6 +344,11 @@ export class AlternativeJourneyService {
               .map((s) => s.station?.name || s.stationName || s.station?.code || '')
               .filter(Boolean)
               .slice(0, 4);
+
+            const isSpecificTrain = Boolean(preferredTrainNumber);
+            const advisoryText = isSpecificTrain
+              ? `Direct segment from your intended boarding station (${from} to ${to}) on Train ${candidateTrainNum} may face seat contention or waitlists. However, this train originates earlier at ${priorOriginName} (${priorOriginCode}), where candidate General Quota allocations may be available under Railway Commercial Rule 142.`
+              : `This train originates earlier at ${priorOriginName} (${priorOriginCode}). Booking from the originating station may provide General Quota allocations under Railway Commercial Rule 142, with legal boarding at your intended station (${from}).`;
 
             sameTrainAlternatives.push({
               id: `st-${candidateTrainNum}`,
@@ -277,24 +376,28 @@ export class AlternativeJourneyService {
               intendedDate: date,
               ticketedStartDate: date,
               destinationArrivalDate: date,
-              additionalDistanceKm: additionalDist || 431,
-              additionalTimeMinutes: additionalTimeMins || 445,
-              totalJourneyMinutes: intendedDurationMins || 1475,
-              paperJourneyMinutes: paperDurationMins || 1920,
+              additionalDistanceKm: additionalDist,
+              additionalTimeMinutes: additionalTimeMins,
+              totalJourneyMinutes: intendedDurationMins,
+              paperJourneyMinutes: paperDurationMins,
               fare: extendedFareVal,
+              fareType,
               baseFareForIntended: intendedFareVal,
               fareDifference: fareDiff,
               travelClass: classCode,
               quota: quota,
-              availabilityStatus: 'Candidate General Quota (Check IRCTC)',
-              availabilityAvailable: true,
+              availabilityStatus: stAvailStatus,
+              availabilityCategory: stAvailCategory,
+              availabilityAvailable: stIsAvail,
               intermediateStations: intermediateHalts,
-              advisoryText: `Direct segment from your intended boarding station (${from} to ${to}) is heavily waitlisted. However, this same train originates earlier at ${priorOriginName} (${priorOriginCode}) where candidate quota allocations may be available.`,
+              advisoryText,
               boardingRuleNotice:
                 'Essential Boarding Notice: Booking from an earlier originating station creates a reservation for that longer ticketed segment. It does not automatically authorize boarding at your intended station. You must officially submit a "Change Boarding Point" request on IRCTC before chart preparation to avoid seat cancellation.',
               isLive: false,
               freshness: 'RailRadar Timetable & PRS Tariff Calculation',
             });
+
+            if (isSpecificTrain) break;
           }
         }
       } catch (err) {
@@ -312,7 +415,7 @@ export class AlternativeJourneyService {
     const junctionPromises = candidateJunctions.map(async (junc) => {
       try {
         const [leg1Res, leg2Res] = await Promise.all([
-          this.railRadar.getTrainsBetween(from, junc.code, { byCity: false }).catch(() => null),
+          this.railRadar.getTrainsBetween(from, junc.code, { byCity: false, date }).catch(() => null),
           this.railRadar.getTrainsBetween(junc.code, to, { byCity: false }).catch(() => null),
         ]);
 
@@ -321,18 +424,27 @@ export class AlternativeJourneyService {
 
         if (leg1Trains.length === 0 || leg2Trains.length === 0) return null;
 
-        // Find the best pair with feasible layover (45 mins to 360 mins)
         for (const t1 of leg1Trains.slice(0, 5)) {
-          const t1Dep = t1.from?.departure || '08:00';
-          const t1Arr = t1.to?.arrival || '16:00';
+          const t1Dep = t1.from?.departure || t1.from?.scheduledDeparture;
+          const t1Arr = t1.to?.arrival || t1.to?.scheduledArrival;
+
+          if (!isValidTimeString(t1Dep) || !isValidTimeString(t1Arr)) {
+            continue;
+          }
+
           const t1ArrMins = parseTimeToMinutes(t1Arr);
-          const t1Dur = Number(t1.duration) || 480;
+          const t1Dur = Number(t1.duration) || computeDurationMins(t1Dep, t1Arr);
 
           for (const t2 of leg2Trains.slice(0, 5)) {
-            const t2Dep = t2.from?.departure || '18:00';
-            const t2Arr = t2.to?.arrival || '06:00';
+            const t2Dep = t2.from?.departure || t2.from?.scheduledDeparture;
+            const t2Arr = t2.to?.arrival || t2.to?.scheduledArrival;
+
+            if (!isValidTimeString(t2Dep) || !isValidTimeString(t2Arr)) {
+              continue;
+            }
+
             const t2DepMins = parseTimeToMinutes(t2Dep);
-            const t2Dur = Number(t2.duration) || 600;
+            const t2Dur = Number(t2.duration) || computeDurationMins(t2Dep, t2Arr);
 
             // Compute layover minutes
             let layoverMins = t2DepMins - t1ArrMins;
@@ -355,9 +467,12 @@ export class AlternativeJourneyService {
                   .catch(() => null),
               ]);
 
-              const f1Val = Number(fare1?.breakdown?.totalFare) || null;
-              const f2Val = Number(fare2?.breakdown?.totalFare) || null;
-              const combinedFare = f1Val && f2Val ? f1Val + f2Val : null;
+              const f1Val = fare1?.breakdown?.totalFare != null ? Number(fare1.breakdown.totalFare) : null;
+              const f2Val = fare2?.breakdown?.totalFare != null ? Number(fare2.breakdown.totalFare) : null;
+              const combinedFare = f1Val != null && f2Val != null ? f1Val + f2Val : null;
+              const conFareType: FareType = (fare1?.source === 'prs' && fare2?.source === 'prs')
+                ? 'QUOTED'
+                : (combinedFare != null ? 'ESTIMATED' : 'UNAVAILABLE');
 
               const leg1Obj: ConnectingLeg = {
                 trainNumber: String(t1.train?.number || t1.number),
@@ -371,9 +486,12 @@ export class AlternativeJourneyService {
                 arrivalDate: date,
                 durationMinutes: t1Dur,
                 durationFormatted: formatMinutes(t1Dur),
+                distanceKm: Number(t1.distance) || null,
                 fare: f1Val,
+                fareType: fare1?.source === 'prs' ? 'QUOTED' : (f1Val != null ? 'ESTIMATED' : 'UNAVAILABLE'),
                 travelClass: classCode,
-                availabilityStatus: 'Available / RAC (Check IRCTC)',
+                availabilityStatus: 'Separate Booking Required',
+                availabilityCategory: 'NOT_CHECKED',
               };
 
               const leg2Obj: ConnectingLeg = {
@@ -388,9 +506,12 @@ export class AlternativeJourneyService {
                 arrivalDate: date,
                 durationMinutes: t2Dur,
                 durationFormatted: formatMinutes(t2Dur),
+                distanceKm: Number(t2.distance) || null,
                 fare: f2Val,
+                fareType: fare2?.source === 'prs' ? 'QUOTED' : (f2Val != null ? 'ESTIMATED' : 'UNAVAILABLE'),
                 travelClass: classCode,
-                availabilityStatus: 'Available / RAC (Check IRCTC)',
+                availabilityStatus: 'Separate Booking Required',
+                availabilityCategory: 'NOT_CHECKED',
               };
 
               const connection: ConnectingAlternative = {
@@ -410,9 +531,11 @@ export class AlternativeJourneyService {
                 totalDurationMinutes: totalDurationMins,
                 totalDurationFormatted: formatMinutes(totalDurationMins),
                 totalFare: combinedFare,
+                fareType: conFareType,
                 transfersCount: 1,
                 layoverLocationNote: `Interchange at ${junc.name} (${junc.code})`,
                 availabilityStatus: 'Separate Booking Required',
+                availabilityCategory: 'NOT_CHECKED',
                 advisoryText:
                   'Notice: Connecting journeys consist of separately booked PNR tickets. Indian Railways does not guarantee connection protection if the first train is delayed.',
                 freshness: 'RailRadar Timetable Feed',
@@ -444,8 +567,9 @@ export class AlternativeJourneyService {
         to,
         date,
         class: classCode,
-        originalTrainNumber: candidateTrainNum,
+        originalTrainNumber: preferredTrainNumber || undefined,
       },
+      isRouteOnly: !preferredTrainNumber,
       originStation,
       destinationStation,
       sameTrainAlternatives,
@@ -453,9 +577,9 @@ export class AlternativeJourneyService {
       connectingAlternatives,
       totalCandidatePaths,
       telemetryFreshness: {
-        source: 'RailRadar Live Telemetry & Timetable Feed',
+        source: 'RailRadar Timetable Feed',
         fetchedAt: new Date().toISOString(),
-        isLive: true,
+        isLive: false,
       },
     };
   }

@@ -4,6 +4,8 @@ import {
   DirectTrainAlternative,
   ConnectingAlternative,
   AlternativeJourneysResult,
+  FareType,
+  AvailabilityCategory,
 } from '@exprest/types';
 
 export type {
@@ -12,6 +14,8 @@ export type {
   DirectTrainAlternative,
   ConnectingAlternative,
   AlternativeJourneysResult,
+  FareType,
+  AvailabilityCategory,
 };
 
 export type SortCriteria = 'best' | 'cheapest' | 'fastest' | 'earliest' | 'transfers';

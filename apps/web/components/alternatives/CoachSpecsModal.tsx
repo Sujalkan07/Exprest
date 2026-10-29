@@ -82,9 +82,9 @@ export const CoachSpecsModal: React.FC<CoachSpecsModalProps> = ({
             </div>
             <div className="p-3 rounded-xl bg-surface-container-low border border-border">
               <span className="text-[10px] uppercase font-semibold text-text-secondary">
-                Nominal Composition
+                Coach Rake Verification
               </span>
-              <div className="text-xs font-bold text-text mt-0.5">22 Coaches (EOG + AC + SL)</div>
+              <div className="text-xs font-bold text-text mt-0.5">Finalized at Chart Prep (~4h prior)</div>
             </div>
           </div>
 

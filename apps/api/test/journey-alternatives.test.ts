@@ -7,7 +7,6 @@ import {
   journeyAlternativesQuerySchema,
   validateInput,
 } from '../src/common/validation/schemas.js';
-import { AlternativeJourneyService } from '../src/modules/journeys/AlternativeJourneyService.js';
 
 describe('Journey Alternatives Test Suite', () => {
   describe('1. Validation Schemas & Input Constraints', () => {
@@ -26,6 +25,15 @@ describe('Journey Alternatives Test Suite', () => {
       });
       assert.equal(valid.from, 'BZA');
       assert.equal(valid.to, 'LKO');
+    });
+
+    it('journeyAlternativesQuerySchema accepts optional trainNumber', () => {
+      const valid = validateInput(journeyAlternativesQuerySchema, {
+        from: 'BZA',
+        to: 'LKO',
+        trainNumber: ' 12512 ',
+      });
+      assert.equal(valid.trainNumber, '12512');
     });
 
     it('journeyAlternativesQuerySchema strictly rejects identical origin and destination', () => {
@@ -78,7 +86,7 @@ describe('Journey Alternatives Test Suite', () => {
     });
 
     it('evaluates connecting layover validity and enforces minimum/maximum layover bounds', () => {
-      // Leg 1 arrives at 16:10 (970 mins from midnight), Leg 2 departs at 18:30 (1110 mins from midnight)
+      // Leg 1 arrives at 16:10 (970 mins), Leg 2 departs at 18:30 (1110 mins)
       const arrMins = 16 * 60 + 10;
       const depMins = 18 * 60 + 30;
       const layover = depMins - arrMins;
@@ -95,6 +103,18 @@ describe('Journey Alternatives Test Suite', () => {
       // Infeasible layover (> 8h excessive waiting)
       const tooLong = 600;
       assert.equal(tooLong <= 480, false);
+    });
+
+    it('correctly calculates layover crossing midnight boundary (day rollover)', () => {
+      // Leg 1 arrives at 23:15 (1395 mins), Leg 2 departs next morning at 01:45 (105 mins)
+      const arrMins = 23 * 60 + 15;
+      const depMins = 1 * 60 + 45;
+      let layover = depMins - arrMins;
+      if (layover < 0) {
+        layover += 1440;
+      }
+      assert.equal(layover, 150); // 2h 30m buffer
+      assert.ok(layover >= 45 && layover <= 480);
     });
 
     it('calculates total connecting duration as Leg 1 duration + Layover + Leg 2 duration', () => {
@@ -185,7 +205,7 @@ describe('Journey Alternatives Test Suite', () => {
       assert.equal(json.error?.code, 'VALIDATION_ERROR');
     });
 
-    it('GET /api/v1/journeys/alternatives returns candidate journey pathways with data truthfulness', async () => {
+    it('GET /api/v1/journeys/alternatives returns route-only mode when trainNumber is omitted', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/journeys/alternatives?from=BZA&to=LKO',
@@ -199,38 +219,65 @@ describe('Journey Alternatives Test Suite', () => {
       const d = json.data;
       assert.equal(d.query?.from, 'BZA');
       assert.equal(d.query?.to, 'LKO');
+      assert.equal(d.isRouteOnly, true, 'isRouteOnly must be true when trainNumber is not supplied');
+      assert.equal(d.query?.originalTrainNumber, undefined);
       assert.ok(Array.isArray(d.sameTrainAlternatives));
       assert.ok(Array.isArray(d.directAlternatives));
       assert.ok(Array.isArray(d.connectingAlternatives));
       assert.ok(typeof d.totalCandidatePaths === 'number');
 
       // Check Category 1: Same Train Alternative if present
-      if (d.sameTrainAlternatives.length > 0) {
-        const st = d.sameTrainAlternatives[0];
+      for (const st of d.sameTrainAlternatives) {
         assert.equal(st.category, 'SAME_TRAIN');
         assert.ok(st.boardingRuleNotice.includes('Change Boarding Point'));
-        assert.ok(st.additionalDistanceKm >= 0);
-        assert.ok(st.fare != null);
+        assert.ok(st.additionalDistanceKm == null || st.additionalDistanceKm >= 0);
+        assert.ok(['QUOTED', 'ESTIMATED', 'UNAVAILABLE'].includes(st.fareType));
+        assert.ok(['AVAILABLE', 'RAC', 'WAITLISTED', 'NOT_CHECKED', 'UNAVAILABLE', 'UNKNOWN'].includes(st.availabilityCategory));
+        // Departure time must never be fabricated '00:00'
+        assert.notEqual(st.departureTimeTicketed, '00:00');
+        assert.notEqual(st.departureTimeBoarding, '00:00');
       }
 
       // Check Category 2: Direct Trains if present
-      if (d.directAlternatives.length > 0) {
-        const dt = d.directAlternatives[0];
+      for (const dt of d.directAlternatives) {
         assert.equal(dt.category, 'DIRECT');
         assert.ok(dt.trainNumber);
-        assert.ok(dt.durationMinutes > 0);
+        assert.notEqual(dt.departureTime, '00:00');
+        assert.notEqual(dt.arrivalTime, '00:00');
+        assert.ok(['QUOTED', 'ESTIMATED', 'UNAVAILABLE'].includes(dt.fareType));
+        assert.ok(['AVAILABLE', 'RAC', 'WAITLISTED', 'NOT_CHECKED', 'UNAVAILABLE', 'UNKNOWN'].includes(dt.availabilityCategory));
+        if (dt.availabilityCategory === 'NOT_CHECKED') {
+          assert.equal(dt.availabilityAvailable, false, 'Unchecked availability must not claim available: true');
+        }
       }
 
       // Check Category 3: Connecting Journeys if present
-      if (d.connectingAlternatives.length > 0) {
-        const con = d.connectingAlternatives[0];
+      for (const con of d.connectingAlternatives) {
         assert.equal(con.category, 'CONNECTING');
         assert.ok(con.leg1);
         assert.ok(con.leg2);
         assert.ok(con.interchangeStation);
-        assert.ok(con.transferLayoverMinutes >= 45);
+        assert.ok(con.transferLayoverMinutes >= 45, 'Layover must be >= 45 minutes');
+        assert.ok(con.transferLayoverMinutes <= 480, 'Layover must be <= 480 minutes (8h)');
         assert.ok(con.advisoryText.includes('separately booked'));
+        assert.ok(['QUOTED', 'ESTIMATED', 'UNAVAILABLE'].includes(con.fareType));
+        if (con.leg1.fare == null || con.leg2.fare == null) {
+          assert.equal(con.totalFare, null, 'Total connecting fare must be null if any leg fare is missing');
+        }
       }
+    });
+
+    it('GET /api/v1/journeys/alternatives honors preferred trainNumber mode', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/journeys/alternatives?from=BZA&to=LKO&trainNumber=12512',
+      });
+
+      assert.equal(res.statusCode, 200);
+      const json = JSON.parse(res.body);
+      const d = json.data;
+      assert.equal(d.isRouteOnly, false);
+      assert.equal(d.query?.originalTrainNumber, '12512');
     });
   });
 });
