@@ -2,12 +2,15 @@ import { FastifyInstance, FastifyReply } from 'fastify';
 import crypto from 'crypto';
 import { TrainService } from '../modules/trains/TrainService.js';
 import { JourneyService } from '../modules/journeys/JourneyService.js';
+import { AlternativeJourneyService } from '../modules/journeys/AlternativeJourneyService.js';
 import { PnrService } from '../modules/pnr/PnrService.js';
 import { AppError } from '../common/errors/AppError.js';
 import { parseOptionalAuth, requireAuth } from '../common/middleware/auth.js';
 import { getCorsAllowedOrigins, normalizeOrigin } from '../cors.js';
 import {
   trainSearchQuerySchema,
+  stationSearchQuerySchema,
+  journeyAlternativesQuerySchema,
   journeyParamSchema,
   poiQuerySchema,
   createShareBodySchema,
@@ -82,6 +85,7 @@ export function toSafeErrorMessage(err: unknown, defaultMessage: string): string
 export async function registerRoutes(fastify: FastifyInstance) {
   const trainService = new TrainService();
   const journeyService = new JourneyService();
+  const alternativeJourneyService = new AlternativeJourneyService();
   const pnrService = new PnrService();
 
   const makeMeta = (reqId: string) => ({
@@ -144,6 +148,67 @@ export async function registerRoutes(fastify: FastifyInstance) {
       );
     }
   });
+
+  // Station Autocomplete & Directory Search
+  fastify.get('/api/v1/stations/search', async (req, reply) => {
+    try {
+      const { q } = validateInput(stationSearchQuerySchema, req.query);
+      const stations = await trainService.searchStations(q);
+      return { data: stations, meta: makeMeta(req.id) };
+    } catch (err: any) {
+      req.log.error({ err, reqId: req.id }, 'Station search provider failure');
+      sendSafeError(
+        reply,
+        req.id,
+        err,
+        'PROVIDER_TIMEOUT',
+        'Station search is temporarily unavailable.',
+        500,
+        true
+      );
+    }
+  });
+
+  // Smart Alternative Journey Discovery
+  fastify.get(
+    '/api/v1/journeys/alternatives',
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const { from, to, date, class: classCode, quota, trainNumber } = validateInput(
+          journeyAlternativesQuerySchema,
+          req.query
+        );
+        const result = await alternativeJourneyService.findAlternatives(
+          from,
+          to,
+          date,
+          classCode,
+          quota,
+          trainNumber
+        );
+        return { data: result, meta: makeMeta(req.id) };
+      } catch (err: any) {
+        req.log.error({ err, reqId: req.id }, 'Alternative journey search failure');
+        sendSafeError(
+          reply,
+          req.id,
+          err,
+          'PROVIDER_TIMEOUT',
+          'Alternative journey discovery is temporarily unavailable.',
+          500,
+          true
+        );
+      }
+    }
+  );
 
   // Journey Canonical Details (PRD §7.3)
   fastify.get('/api/v1/journeys/:journeyId', async (req, reply) => {

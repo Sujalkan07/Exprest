@@ -304,3 +304,133 @@ export interface GeoBounds {
   minLon: number;
   maxLon: number;
 }
+
+// Journey Alternatives Domain Types
+export type JourneyCategoryType = 'SAME_TRAIN' | 'DIRECT' | 'CONNECTING';
+
+export interface StationInfo {
+  code: string;
+  name: string;
+  city?: string | null;
+  state?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+}
+
+export interface SameTrainAlternative {
+  id: string;
+  category: 'SAME_TRAIN';
+  trainNumber: string;
+  trainName: string;
+  ticketedOrigin: StationInfo;
+  ticketedDestination: StationInfo;
+  intendedBoarding: StationInfo;
+  departureTimeTicketed: string;
+  departureTimeBoarding: string;
+  arrivalTimeDestination: string;
+  intendedDate: string;
+  ticketedStartDate: string;
+  destinationArrivalDate: string;
+  additionalDistanceKm: number;
+  additionalTimeMinutes: number;
+  totalJourneyMinutes: number;
+  paperJourneyMinutes: number;
+  fare: number | null;
+  baseFareForIntended: number | null;
+  fareDifference: number | null;
+  travelClass: string;
+  quota: string;
+  availabilityStatus: string;
+  availabilityAvailable: boolean;
+  intermediateStations: string[];
+  advisoryText: string;
+  boardingRuleNotice: string;
+  isLive: boolean;
+  freshness: string;
+}
+
+export interface DirectTrainAlternative {
+  id: string;
+  category: 'DIRECT';
+  trainNumber: string;
+  trainName: string;
+  trainType: string;
+  origin: StationInfo;
+  destination: StationInfo;
+  departureTime: string;
+  arrivalTime: string;
+  departureDate: string;
+  arrivalDate: string;
+  durationMinutes: number;
+  durationFormatted: string;
+  distanceKm: number;
+  totalHaltsBetween?: number;
+  fare: number | null;
+  travelClass: string;
+  availabilityStatus: string;
+  availabilityAvailable: boolean;
+  scheduledServiceText: string;
+  isFaster?: boolean;
+  isLive: boolean;
+  freshness: string;
+}
+
+export interface ConnectingLeg {
+  trainNumber: string;
+  trainName: string;
+  trainType?: string;
+  from: StationInfo;
+  to: StationInfo;
+  departureTime: string;
+  arrivalTime: string;
+  departureDate: string;
+  arrivalDate: string;
+  durationMinutes: number;
+  durationFormatted: string;
+  distanceKm?: number;
+  fare: number | null;
+  travelClass: string;
+  availabilityStatus: string;
+}
+
+export interface ConnectingAlternative {
+  id: string;
+  category: 'CONNECTING';
+  name: string;
+  origin: StationInfo;
+  destination: StationInfo;
+  interchangeStation: StationInfo;
+  transferLayoverMinutes: number;
+  transferLayoverFormatted: string;
+  leg1: ConnectingLeg;
+  leg2: ConnectingLeg;
+  totalDurationMinutes: number;
+  totalDurationFormatted: string;
+  totalFare: number | null;
+  transfersCount: number;
+  layoverLocationNote?: string;
+  availabilityStatus: string;
+  advisoryText: string;
+  freshness: string;
+}
+
+export interface AlternativeJourneysResult {
+  query: {
+    from: string;
+    to: string;
+    date: string;
+    class: string;
+    originalTrainNumber?: string;
+  };
+  originStation: StationInfo;
+  destinationStation: StationInfo;
+  sameTrainAlternatives: SameTrainAlternative[];
+  directAlternatives: DirectTrainAlternative[];
+  connectingAlternatives: ConnectingAlternative[];
+  totalCandidatePaths: number;
+  telemetryFreshness: {
+    source: string;
+    fetchedAt: string;
+    isLive: boolean;
+  };
+}

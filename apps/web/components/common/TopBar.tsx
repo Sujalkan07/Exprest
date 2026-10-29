@@ -66,6 +66,9 @@ export const TopBar: React.FC = () => {
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
         <Logo />
         <nav className="flex items-center gap-3 text-sm font-medium">
+          <Link href="/alternatives" className="text-text-secondary hover:text-text transition-colors">
+            Alternatives
+          </Link>
           <Link href="/saved" className="text-text-secondary hover:text-text transition-colors">
             Saved
           </Link>

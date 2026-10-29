@@ -415,6 +415,15 @@ export default function HomePage() {
                 <span>Live Radar</span>
               </a>
               <Link
+                href="/alternatives"
+                className="text-secondary hover:text-on-surface text-[13px] font-normal transition-colors py-1 flex items-center gap-1.5"
+              >
+                <span>Alternatives</span>
+                <span className="px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 font-semibold text-[10px]">
+                  New
+                </span>
+              </Link>
+              <Link
                 href="/pnr-status"
                 className="text-secondary hover:text-on-surface text-[13px] font-normal transition-colors py-1"
               >
@@ -731,6 +740,38 @@ export default function HomePage() {
           </div>
         </div>
 
+        {/* ==================== JOURNEY ALTERNATIVES PROMO SECTION ==================== */}
+        <section className="w-full mb-6">
+          <div className="w-full rounded-2xl bg-amber-500/10 border border-amber-500/30 p-5 sm:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                <span className="material-symbols-outlined text-[24px]">alt_route</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-[16px] font-bold text-on-surface">
+                    Smart Alternative Journey Finder
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-semibold text-[10px] uppercase">
+                    New Feature
+                  </span>
+                </div>
+                <p className="text-[13px] text-secondary leading-relaxed max-w-2xl">
+                  Facing long waitlists? Discover same-train prior terminal bookings with legal IRCTC Rule 142 boarding changes, alternative direct trains, and timed connection junctions.
+                </p>
+              </div>
+            </div>
+
+            <Link
+              href="/alternatives"
+              className="h-10 px-5 rounded-xl bg-primary hover:bg-neutral-800 text-on-primary text-[13px] font-semibold flex items-center gap-2 transition-all shadow-sm shrink-0 whitespace-nowrap active:scale-[0.98]"
+            >
+              <span>Find Alternatives</span>
+              <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+            </Link>
+          </div>
+        </section>
+
         {/* ==================== LIVE RADAR CTA ==================== */}
         <section className="w-full" id="radar">
           <div className="w-full rounded-xl bg-[#111113] text-white p-5 sm:p-6 border border-neutral-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden">
@@ -790,6 +831,7 @@ export default function HomePage() {
             <span className="font-mono text-[11px]">MapLibre Vector Tiles</span>
           </div>
           <div className="flex items-center gap-5 text-[12px]">
+            <Link className="hover:text-on-surface transition-colors" href="/alternatives">Alternatives</Link>
             <Link className="hover:text-on-surface transition-colors" href="/saved">Saved Trains</Link>
             <Link className="hover:text-on-surface transition-colors" href="/settings">Settings</Link>
             <Link className="hover:text-on-surface transition-colors" href="/pnr-status">PNR Status</Link>

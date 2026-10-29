@@ -1,8 +1,11 @@
-import { Train, JourneyRun, LivePosition, TrainStop, JourneyStatus, PnrStatusResult, PassengerStatus, CoachRakeItem, PnrLiveTrainStatus } from '@exprest/types';
+import { Train, JourneyRun, LivePosition, TrainStop, JourneyStatus, PnrStatusResult, PassengerStatus, CoachRakeItem, PnrLiveTrainStatus, StationInfo } from '@exprest/types';
 import { AppError } from '../../common/errors/AppError.js';
 
 export interface TrainProvider {
   search(query: string): Promise<Train[]>;
+  searchStations(query: string): Promise<StationInfo[]>;
+  getTrainsBetween(from: string, to: string, options?: { byCity?: boolean; date?: string; live?: boolean }): Promise<any>;
+  getTrainDetails(trainNumber: string): Promise<any>;
   getRun(trainNumber: string, serviceDate: string): Promise<{ train: Train; run: JourneyRun; stops: TrainStop[]; allStops: any[]; liveStatus: string; isLive: boolean } | null>;
   getLivePosition(trainNumber: string): Promise<LivePosition | null>;
   getRouteGeometry(trainNumber: string): Promise<{ type: 'LineString'; coordinates: [number, number][] } | null>;
@@ -161,6 +164,106 @@ export class RailRadarAdapter implements TrainProvider {
     }
 
     return [];
+  }
+
+  async searchStations(query: string): Promise<StationInfo[]> {
+    const q = query.trim();
+    if (!q) return [];
+
+    try {
+      const res = await fetch(
+        this.buildUrl(`${BASE_URL}/stations/search?q=${encodeURIComponent(q)}`),
+        { headers: this.headers, signal: AbortSignal.timeout(8_000) }
+      );
+
+      if (res.ok) {
+        const json = await res.json();
+        const items: any[] = json?.data || [];
+        if (Array.isArray(items) && items.length > 0) {
+          const seen = new Set<string>();
+          const results: StationInfo[] = [];
+          for (const item of items) {
+            const code = (item.code || '').trim().toUpperCase();
+            if (!code || seen.has(code)) continue;
+            seen.add(code);
+            results.push({
+              code,
+              name: item.name || code,
+              city: item.city || null,
+              state: item.state || null,
+              lat: typeof item.lat === 'number' ? item.lat : null,
+              lng: typeof item.lng === 'number' ? item.lng : null,
+            });
+          }
+          return results;
+        }
+      } else {
+        console.warn(`RailRadar searchStations API returned status: ${res.status}`);
+      }
+    } catch (err) {
+      console.error('RailRadar searchStations API error:', this.sanitizeError(err));
+    }
+
+    return [];
+  }
+
+  async getTrainsBetween(
+    from: string,
+    to: string,
+    options?: { byCity?: boolean; date?: string; live?: boolean }
+  ): Promise<any> {
+    const cleanFrom = from.trim().toUpperCase();
+    const cleanTo = to.trim().toUpperCase();
+    if (!cleanFrom || !cleanTo) {
+      return { from: { code: cleanFrom, name: cleanFrom }, to: { code: cleanTo, name: cleanTo }, trains: [], count: 0 };
+    }
+
+    const byCity = options?.byCity !== false;
+    let url = `${BASE_URL}/trains/between/${encodeURIComponent(cleanFrom)}/${encodeURIComponent(cleanTo)}?byCity=${byCity ? 'true' : 'false'}`;
+    if (options?.date) {
+      url += `&date=${encodeURIComponent(options.date)}`;
+    }
+    if (options?.live) {
+      url += `&live=true`;
+    }
+
+    try {
+      const res = await fetch(this.buildUrl(url), {
+        headers: this.headers,
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        return json?.data || { from: { code: cleanFrom, name: cleanFrom }, to: { code: cleanTo, name: cleanTo }, trains: [], count: 0 };
+      } else {
+        console.warn(`RailRadar getTrainsBetween (${cleanFrom} -> ${cleanTo}) returned status: ${res.status}`);
+      }
+    } catch (err) {
+      console.error(`RailRadar getTrainsBetween (${cleanFrom} -> ${cleanTo}) API error:`, this.sanitizeError(err));
+    }
+
+    return { from: { code: cleanFrom, name: cleanFrom }, to: { code: cleanTo, name: cleanTo }, trains: [], count: 0 };
+  }
+
+  async getTrainDetails(trainNumber: string): Promise<any> {
+    const cleanNum = trainNumber.trim().replace(/\D/g, '');
+    if (!cleanNum) return null;
+
+    try {
+      const res = await fetch(this.buildUrl(`${BASE_URL}/trains/${cleanNum}`), {
+        headers: this.headers,
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        return json?.data || null;
+      }
+    } catch (err) {
+      console.warn(`RailRadar getTrainDetails (${cleanNum}) error:`, this.sanitizeError(err));
+    }
+    return null;
   }
 
   async getRun(trainNumber: string, serviceDate: string): Promise<{ train: Train; run: JourneyRun; stops: TrainStop[]; allStops: any[]; liveStatus: string; isLive: boolean } | null> {

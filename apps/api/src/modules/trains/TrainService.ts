@@ -10,4 +10,11 @@ export class TrainService {
     }
     return this.railRadar.search(query);
   }
+
+  async searchStations(query: string) {
+    if (!query || query.trim().length === 0) {
+      throw new AppError('INVALID_QUERY', 'Search query cannot be empty.', 400);
+    }
+    return this.railRadar.searchStations(query);
+  }
 }

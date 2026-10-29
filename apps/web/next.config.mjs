@@ -26,6 +26,15 @@ const nextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      {
+        source: '/journey/alternatives',
+        destination: '/alternatives',
+        permanent: false,
+      },
+    ];
+  },
   async headers() {
     return [
       {

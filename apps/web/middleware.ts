@@ -6,7 +6,7 @@ export async function middleware(request: NextRequest) {
 
   // 1. Allow public static assets, favicon, Next.js internal files
   if (
-    pathname.startsWith('/_next') ||
+    pathname.startsWith('/_') ||
     pathname.startsWith('/api') ||
     pathname === '/favicon.ico' ||
     pathname.includes('.')
@@ -180,6 +180,6 @@ export const config = {
      * - favicon.ico (favicon file)
      * - images/svg assets
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|_not-found|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

@@ -17,11 +17,12 @@ export default async function RootLayout({
   const nonce = headerList.get('x-nonce') ?? undefined;
 
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         {/* Theme and reduced-motion initializer — runs before first paint to avoid flash */}
         <script
           nonce={nonce}
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{ __html: `
           (function() {
             try {

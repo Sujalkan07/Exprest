@@ -117,6 +117,49 @@ export const trainFareQuerySchema = z.object({
   quota: z.string().max(5).optional(),
 });
 
+export const stationSearchQuerySchema = z.object({
+  q: z
+    .string()
+    .transform((val) => val.trim())
+    .refine((val) => val.length >= 1, {
+      message: 'Search query cannot be empty',
+    })
+    .refine((val) => val.length <= 100, {
+      message: 'Search query cannot exceed 100 characters',
+    }),
+});
+
+export const journeyAlternativesQuerySchema = z
+  .object({
+    from: z
+      .string()
+      .min(2, 'Origin station code must be at least 2 characters')
+      .max(10, 'Origin station code cannot exceed 10 characters')
+      .transform((val) => val.trim().toUpperCase()),
+    to: z
+      .string()
+      .min(2, 'Destination station code must be at least 2 characters')
+      .max(10, 'Destination station code cannot exceed 10 characters')
+      .transform((val) => val.trim().toUpperCase()),
+    date: z
+      .string()
+      .optional()
+      .refine((val) => !val || isValidCalendarDate(val), {
+        message: 'Date must be a valid real calendar date formatted as YYYY-MM-DD',
+      }),
+    class: z.string().max(5).optional().default('3A'),
+    quota: z.string().max(5).optional().default('GN'),
+    trainNumber: z
+      .string()
+      .max(10)
+      .optional()
+      .transform((val) => (val ? val.trim() : undefined)),
+  })
+  .refine((data) => data.from !== data.to, {
+    message: 'Origin and destination stations cannot be the same station.',
+    path: ['to'],
+  });
+
 export function validateInput<T>(
   schema: ZodSchema<T>,
   data: unknown,
