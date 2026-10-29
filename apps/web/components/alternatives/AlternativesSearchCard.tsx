@@ -469,20 +469,8 @@ export const AlternativesSearchCard: React.FC<AlternativesSearchCardProps> = ({
           </div>
         </div>
 
-        {/* Secondary Search Settings & Quick Sorter Pills */}
+        {/* Priority Sorter Pills */}
         <div className="mt-4 pt-3.5 border-t border-border flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
-            <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-container-low border border-border">
-              <span className="material-symbols-outlined text-[15px]">group</span>
-              <span>1-2 Passengers</span>
-            </span>
-            <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-container-low border border-border">
-              <span className="material-symbols-outlined text-[15px]">tune</span>
-              <span>Budget &lt; ₹{maxFareBudget.toLocaleString('en-IN')}</span>
-            </span>
-          </div>
-
-          {/* Priority Sorter Pills */}
           <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Sort options">
             <span className="text-[11px] font-bold uppercase text-text-tertiary mr-1 hidden sm:inline">
               Priority:

@@ -21,9 +21,7 @@ export const StatusRibbon: React.FC<StatusRibbonProps> = ({
             Home
           </Link>
           <span className="text-border">/</span>
-          <span className="text-text-secondary">Journey Planner</span>
-          <span className="text-border">/</span>
-          <span className="text-text font-semibold">Alternative Journeys</span>
+          <span className="text-text font-semibold">Alternatives</span>
         </nav>
 
         {/* Live RailRadar Data Status Indicator */}
