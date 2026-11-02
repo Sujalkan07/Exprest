@@ -2,7 +2,7 @@ name: CI & Security Verification
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, security/comprehensive-remediation ]
   pull_request:
     branches: [ main ]
 
@@ -18,33 +18,54 @@ jobs:
     env:
       NODE_ENV: test
       AUTH_SECRET: ci_test_auth_secret_minimum_16_characters
+      SHARE_SIGNING_SECRET: ci_test_share_signing_secret_32_characters_long
       RAILRADAR_API_KEY: mock_ci_railradar_api_key_test
       SUPABASE_URL: https://mock-test.supabase.co
+      SUPABASE_JWT_SECRET: ci_test_supabase_jwt_secret_minimum_32_characters
       PUBLIC_APP_URL: https://exprest.vercel.app
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout repository with full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks Repository & History Secret Scan
+        uses: gitleaks/gitleaks-action@7a5bf573d4a663952a233b664d4b29bb88566ff0 # v2.3.8
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comprehensive Worktree & Nested Secret Check
+        run: |
+          echo "Scanning for tracked nested .env files or exposed private key material..."
+          TRACKED_ENV=$(git ls-files | grep -iE '(^|/)\.env(\.|$)' | grep -v '\.example' || true)
+          if [ -n "$TRACKED_ENV" ]; then
+            echo "ERROR: Tracked .env files found in git index:"
+            echo "$TRACKED_ENV"
+            exit 1
+          fi
+          TRACKED_KEYS=$(git ls-files | grep -iE '\.(pem|key|pkcs12|p12|id_rsa)$' || true)
+          if [ -n "$TRACKED_KEYS" ]; then
+            echo "ERROR: Tracked private key files found in git index:"
+            echo "$TRACKED_KEYS"
+            exit 1
+          fi
+          echo "Verification passed: No tracked secret files or private keys detected in working tree."
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d792d8ec0e67d9135f3 # v4.0.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 20
           cache: 'pnpm'
 
-      - name: Install dependencies
+      - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Dependency Security Audit
+      - name: Production Dependency Security Audit
         run: pnpm audit --prod
-
-      - name: Secret Scan Verification
-        run: |
-          echo "Scanning for accidental secret commits or unignored .env files..."
-          git ls-files | grep -E '^\.env|\.env\.(local|production|staging)$' && exit 1 || echo "No tracked .env files detected."
 
       - name: Monorepo Typecheck
         run: pnpm -r run typecheck

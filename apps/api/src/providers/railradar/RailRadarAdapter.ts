@@ -793,31 +793,72 @@ export class RailRadarAdapter implements TrainProvider {
   }
 
   /**
-   * Normalizes a journey date to YYYY-MM-DD.
-   * If empty, past, or invalid, returns today's date in IST.
+   * Validates and parses calendar date string (YYYY-MM-DD, DD-MM-YYYY, or DD/MM/YYYY)
+   * into canonical YYYY-MM-DD format. Enforces real calendar days and leap years.
    */
-  static normalizeFareDate(journeyDate?: string | null): string {
-    const todayIst = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-    if (!journeyDate || typeof journeyDate !== 'string') return todayIst;
+  static parseCalendarDate(journeyDate?: string | null): string | null {
+    if (!journeyDate || typeof journeyDate !== 'string') return null;
     const clean = journeyDate.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-      return clean >= todayIst ? clean : todayIst;
+    let y = 0, m = 0, d = 0;
+
+    const ymd = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (ymd) {
+      y = parseInt(ymd[1], 10);
+      m = parseInt(ymd[2], 10);
+      d = parseInt(ymd[3], 10);
+    } else {
+      const dmy = clean.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+      if (dmy) {
+        y = parseInt(dmy[3], 10);
+        m = parseInt(dmy[2], 10);
+        d = parseInt(dmy[1], 10);
+      } else {
+        return null;
+      }
     }
-    const dmy = clean.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
-    if (dmy) {
-      const formatted = `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
-      return formatted >= todayIst ? formatted : todayIst;
+
+    if (y < 1900 || y > 2100 || m < 1 || m > 12) return null;
+    const maxDays = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    if (d < 1 || d > maxDays) return null;
+
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
+  /**
+   * Normalizes a journey date to canonical YYYY-MM-DD without silently altering historical dates.
+   * If empty or undefined, defaults to today's date in IST.
+   * If an invalid format or impossible calendar date is supplied, throws an AppError.
+   * If allowHistorical is false and the date is in the past, throws an AppError.
+   */
+  static normalizeFareDate(journeyDate?: string | null, options?: { allowHistorical?: boolean }): string {
+    const todayIst = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    if (!journeyDate || typeof journeyDate !== 'string' || journeyDate.trim() === '') {
+      return todayIst;
     }
-    const parsed = new Date(clean);
-    if (!isNaN(parsed.getTime())) {
-      const iso = parsed.toISOString().split('T')[0];
-      return iso >= todayIst ? iso : todayIst;
+    const parsed = RailRadarAdapter.parseCalendarDate(journeyDate);
+    if (!parsed) {
+      throw new AppError(
+        'INVALID_QUERY',
+        `Invalid journey date '${journeyDate}'. Expected a valid calendar date in YYYY-MM-DD or DD-MM-YYYY format.`,
+        400
+      );
     }
-    return todayIst;
+
+    if (options?.allowHistorical === false && parsed < todayIst) {
+      throw new AppError(
+        'INVALID_QUERY',
+        `Historical journey date '${parsed}' is not supported for live seat availability queries.`,
+        400
+      );
+    }
+
+    // Preserve the exact requested calendar date without substituting today
+    return parsed;
   }
 
   /**
    * Fallback telescopic fare calculation in accordance with Indian Railways passenger tariffs.
+   * Returns null if a valid positive segment distance is not provided (never fabricates 800 km).
    */
   static computeTelescopicFareFallback(distanceKm: number, classCode: string, isSuperfast = true): {
     baseFare: number;
@@ -829,8 +870,11 @@ export class RailRadarAdapter implements TrainProvider {
     dynamicFare: number;
     otherCharge: number;
     totalFare: number;
-  } {
-    const dist = Math.max(50, distanceKm || 800);
+  } | null {
+    if (!distanceKm || typeof distanceKm !== 'number' || isNaN(distanceKm) || distanceKm <= 0) {
+      return null;
+    }
+    const dist = Math.max(10, Math.round(distanceKm));
     const cls = RailRadarAdapter.normalizeClassCode(classCode);
 
     let ratePerKm = 1.6;
@@ -924,28 +968,11 @@ export class RailRadarAdapter implements TrainProvider {
     }
 
     const normClass = RailRadarAdapter.normalizeClassCode(classCode);
-    const fareDate = RailRadarAdapter.normalizeFareDate(journeyDate);
-    let src = (fromStation || '').trim();
-    let dst = (toStation || '').trim();
+    const fareDate = RailRadarAdapter.normalizeFareDate(journeyDate, { allowHistorical: true });
+    let src = (fromStation || '').trim().toUpperCase();
+    let dst = (toStation || '').trim().toUpperCase();
 
-    // If source or destination missing, fetch from train details
-    let trainDistance = 800;
-    try {
-      const trainRes = await fetch(this.buildUrl(`${BASE_URL}/trains/${cleanTrain}`), {
-        headers: this.headers,
-        signal: AbortSignal.timeout(4_000),
-      });
-      if (trainRes.ok) {
-        const trainJson = await trainRes.json();
-        const tInfo = trainJson?.data?.train;
-        if (!src && tInfo?.source?.code) src = tInfo.source.code;
-        if (!dst && tInfo?.destination?.code) dst = tInfo.destination.code;
-        const distNum = Number(tInfo?.distance);
-        if (!isNaN(distNum) && distNum > 0) trainDistance = distNum;
-      }
-    } catch {}
-
-    // Query upstream RailRadar fare endpoint
+    // 1. Query upstream RailRadar fare endpoint first
     if (src && dst) {
       try {
         let url = `${BASE_URL}/trains/${cleanTrain}/fare?from=${encodeURIComponent(src)}&to=${encodeURIComponent(dst)}&journeyDate=${encodeURIComponent(fareDate)}&classCode=${encodeURIComponent(normClass)}`;
@@ -960,10 +987,18 @@ export class RailRadarAdapter implements TrainProvider {
 
         if (res.ok) {
           const json = await res.json();
-          if (json?.data?.breakdown) {
+          if (json?.data?.breakdown && typeof json.data.breakdown.totalFare === 'number') {
             return {
-              ...json.data,
+              trainNumber: cleanTrain,
+              fromStation: src,
+              toStation: dst,
+              journeyDate: fareDate,
+              travelClass: normClass,
+              quota: quota || 'GN',
+              distance: typeof json.data.distance === 'number' ? json.data.distance : (json.data.breakdown.distance || null),
+              breakdown: json.data.breakdown,
               source: 'prs',
+              generatedAt: new Date().toISOString(),
             };
           }
         }
@@ -972,14 +1007,161 @@ export class RailRadarAdapter implements TrainProvider {
       }
     }
 
-    // Fallback: estimate from train distance
-    const breakdown = RailRadarAdapter.computeTelescopicFareFallback(trainDistance, normClass, true);
+    // 2. Fallback: inspect route stops to find actual segment distance (never substitute full train distance)
+    let segmentDistance: number | null = null;
+    try {
+      const trainRes = await fetch(this.buildUrl(`${BASE_URL}/trains/${cleanTrain}`), {
+        headers: this.headers,
+        signal: AbortSignal.timeout(4_000),
+      });
+      if (trainRes.ok) {
+        const trainJson = await trainRes.json();
+        const routeStops: any[] = trainJson?.data?.route || trainJson?.data?.stops || [];
+        if (routeStops.length > 0) {
+          const fromStop = routeStops.find(
+            (s) => (s.station?.code || s.stationCode) === src
+          );
+          const toStop = routeStops.find(
+            (s) => (s.station?.code || s.stationCode) === dst
+          );
+          if (fromStop && toStop && typeof fromStop.distance === 'number' && typeof toStop.distance === 'number') {
+            const calculatedDist = toStop.distance - fromStop.distance;
+            if (calculatedDist > 0) {
+              segmentDistance = calculatedDist;
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // Only compute fallback estimate if a verified segment distance was determined
+    if (segmentDistance != null && segmentDistance > 0) {
+      const breakdown = RailRadarAdapter.computeTelescopicFareFallback(segmentDistance, normClass, true);
+      if (breakdown) {
+        return {
+          trainNumber: cleanTrain,
+          fromStation: src,
+          toStation: dst,
+          journeyDate: fareDate,
+          travelClass: normClass,
+          quota: quota || 'GN',
+          distance: segmentDistance,
+          breakdown,
+          source: 'telescopic_fallback',
+          generatedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    // Return unavailable when a reliable estimate cannot be generated without fabricating distances
     return {
       trainNumber: cleanTrain,
-      distance: trainDistance,
-      breakdown,
-      source: 'telescopic_fallback',
+      fromStation: src,
+      toStation: dst,
+      journeyDate: fareDate,
+      travelClass: normClass,
+      quota: quota || 'GN',
+      distance: null,
+      breakdown: null,
+      source: 'unavailable',
       generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Normalizes raw availability status string returned by providers or IRCTC.
+   * Priority rule: Negative/unavailable statuses MUST be checked before positive statuses.
+   * RAC is classified as RAC (not confirmed available).
+   * Waitlisted tickets are classified as WAITLISTED.
+   * Unknown values classify as UNKNOWN. Empty/null as NOT_CHECKED.
+   */
+  static normalizeAvailabilityStatus(rawStatus?: string | null): {
+    category: AvailabilityCategory;
+    isAvailable: boolean;
+    statusText: string;
+  } {
+    if (!rawStatus || typeof rawStatus !== 'string' || rawStatus.trim() === '') {
+      return {
+        category: 'NOT_CHECKED',
+        isAvailable: false,
+        statusText: 'Check Live PRS on IRCTC',
+      };
+    }
+
+    // Normalize: trim, uppercase, collapse whitespace
+    const clean = rawStatus.trim().toUpperCase().replace(/\s+/g, ' ');
+
+    // 1. Negative / Unavailable statuses MUST be evaluated FIRST
+    if (
+      clean.includes('NOT AVAILABLE') ||
+      clean.includes('NOT-AVAILABLE') ||
+      clean.includes('NOT_AVAILABLE') ||
+      clean.includes('REGRET') ||
+      clean.includes('CLOSED') ||
+      clean.includes('NO SEATS') ||
+      clean.includes('CANNOT ALLOT') ||
+      clean.includes('DEPARTED')
+    ) {
+      return {
+        category: 'UNAVAILABLE',
+        isAvailable: false,
+        statusText: clean,
+      };
+    }
+
+    // 2. Waitlisted statuses
+    if (
+      clean.startsWith('WL') ||
+      clean.startsWith('RLWL') ||
+      clean.startsWith('GNWL') ||
+      clean.startsWith('PQWL') ||
+      clean.startsWith('TQWL') ||
+      clean.startsWith('RSWL') ||
+      clean.startsWith('CKWL') ||
+      clean.includes('WAITLIST') ||
+      clean.includes('WAIT')
+    ) {
+      return {
+        category: 'WAITLISTED',
+        isAvailable: false,
+        statusText: clean,
+      };
+    }
+
+    // 3. RAC (Reservation Against Cancellation) - NOT a confirmed seat
+    if (clean.startsWith('RAC') || clean.includes(' RAC') || clean.includes('RAC ')) {
+      return {
+        category: 'RAC',
+        isAvailable: false,
+        statusText: clean,
+      };
+    }
+
+    // 4. Positive / Available statuses
+    if (
+      clean === 'AVAILABLE' ||
+      clean === 'AVBL' ||
+      clean === 'CURR_AVBL' ||
+      clean === 'CURR AVBL' ||
+      clean.startsWith('AVAILABLE') ||
+      clean.startsWith('AVBL') ||
+      clean.startsWith('CURR_AVBL') ||
+      clean.startsWith('CURR AVBL') ||
+      clean.includes('AVAILABLE') ||
+      clean.includes('AVBL')
+    ) {
+      return {
+        category: 'AVAILABLE',
+        isAvailable: true,
+        statusText: clean,
+      };
+    }
+
+    // 5. Unrecognized non-empty status -> UNKNOWN
+    return {
+      category: 'UNKNOWN',
+      isAvailable: false,
+      statusText: clean,
     };
   }
 
@@ -1009,7 +1191,24 @@ export class RailRadarAdapter implements TrainProvider {
     const cleanFrom = (fromStation || '').trim().toUpperCase();
     const cleanTo = (toStation || '').trim().toUpperCase();
     const normClass = RailRadarAdapter.normalizeClassCode(classCode);
-    const date = RailRadarAdapter.normalizeFareDate(journeyDate);
+    let date: string;
+    try {
+      // Historical dates explicitly disallowed for seat booking availability
+      date = RailRadarAdapter.normalizeFareDate(journeyDate, { allowHistorical: false });
+    } catch {
+      return {
+        trainNumber: cleanTrain,
+        fromStation: cleanFrom,
+        toStation: cleanTo,
+        journeyDate: journeyDate || '',
+        travelClass: normClass,
+        quota,
+        category: 'UNAVAILABLE',
+        statusText: 'Historical or invalid date cannot be booked',
+        isAvailable: false,
+        source: 'unverified',
+      };
+    }
 
     if (!cleanTrain || !cleanFrom || !cleanTo) {
       return {
@@ -1037,26 +1236,8 @@ export class RailRadarAdapter implements TrainProvider {
         const json = await res.json();
         const d = json?.data;
         if (d) {
-          const rawStatus = String(d.status || d.currentStatus || d.availabilityStatus || '').trim().toUpperCase();
-          let category: AvailabilityCategory = 'UNKNOWN';
-          let isAvail = false;
-
-          if (rawStatus.includes('AVAILABLE') || rawStatus.includes('AVBL') || rawStatus.includes('CURR_AVBL')) {
-            category = 'AVAILABLE';
-            isAvail = true;
-          } else if (rawStatus.includes('RAC')) {
-            category = 'RAC';
-            isAvail = true;
-          } else if (rawStatus.includes('WL') || rawStatus.includes('WAIT')) {
-            category = 'WAITLISTED';
-            isAvail = false;
-          } else if (rawStatus.includes('REGRET') || rawStatus.includes('NOT AVAILABLE')) {
-            category = 'UNAVAILABLE';
-            isAvail = false;
-          } else if (rawStatus) {
-            category = 'UNKNOWN';
-            isAvail = false;
-          }
+          const rawStatus = String(d.status || d.currentStatus || d.availabilityStatus || '');
+          const normalized = RailRadarAdapter.normalizeAvailabilityStatus(rawStatus);
 
           return {
             trainNumber: cleanTrain,
@@ -1065,12 +1246,12 @@ export class RailRadarAdapter implements TrainProvider {
             journeyDate: date,
             travelClass: normClass,
             quota,
-            category,
-            statusText: d.status || d.currentStatus || (isAvail ? 'Available' : 'Check PRS'),
-            isAvailable: isAvail,
-            confirmedSeats: typeof d.availableSeats === 'number' ? d.availableSeats : undefined,
-            racNumber: typeof d.racNumber === 'number' ? d.racNumber : undefined,
-            waitlistNumber: typeof d.waitlistNumber === 'number' ? d.waitlistNumber : undefined,
+            category: normalized.category,
+            statusText: d.status || d.currentStatus || normalized.statusText,
+            isAvailable: normalized.isAvailable,
+            confirmedSeats: typeof d.availableSeats === 'number' && d.availableSeats >= 0 ? d.availableSeats : undefined,
+            racNumber: typeof d.racNumber === 'number' && d.racNumber >= 0 ? d.racNumber : undefined,
+            waitlistNumber: typeof d.waitlistNumber === 'number' && d.waitlistNumber >= 0 ? d.waitlistNumber : undefined,
             source: 'prs',
           };
         }

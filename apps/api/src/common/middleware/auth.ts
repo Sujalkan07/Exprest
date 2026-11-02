@@ -104,6 +104,7 @@ let inFlightJwksFetch: Promise<void> | null = null;
 export function parseJwks(data: { keys: any[] }): Map<string, JwkRecord> {
   const result = new Map<string, JwkRecord>();
   if (!data || !Array.isArray(data.keys)) return result;
+  if (data.keys.length > MAX_JWKS_KEY_COUNT) return result;
 
   for (const jwk of data.keys) {
     if (!jwk || typeof jwk !== 'object') continue;
@@ -133,6 +134,10 @@ export function parseJwks(data: { keys: any[] }): Map<string, JwkRecord> {
  * Accepts standard JWKS payload: { keys: JwkEntry[] }.
  */
 export function setTrustedJwks(jwks: { keys: any[] }): void {
+  if (!jwks || !Array.isArray(jwks.keys)) return;
+  if (jwks.keys.length > MAX_JWKS_KEY_COUNT) {
+    throw new Error(`JWKS key count ${jwks.keys.length} exceeds limit ${MAX_JWKS_KEY_COUNT}`);
+  }
   const parsed = parseJwks(jwks);
   for (const [kid, record] of parsed) {
     jwksCache.set(kid, record);
@@ -203,8 +208,11 @@ export async function loadJwksIfNeeded(kid?: string): Promise<void> {
   // 2. Static JWKS provided via SUPABASE_JWKS environment variable (air-gapped / offline support)
   if (process.env.SUPABASE_JWKS && jwksCache.size === 0) {
     try {
+      if (Buffer.byteLength(process.env.SUPABASE_JWKS, 'utf-8') > MAX_JWKS_PAYLOAD_BYTES) {
+        throw new Error('SUPABASE_JWKS exceeds size limit');
+      }
       const parsed = JSON.parse(process.env.SUPABASE_JWKS);
-      if (Array.isArray(parsed?.keys)) {
+      if (Array.isArray(parsed?.keys) && parsed.keys.length <= MAX_JWKS_KEY_COUNT) {
         setTrustedJwks(parsed);
       }
     } catch {
@@ -328,7 +336,7 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
     }
 
     // 2. Validate expiration (exp)
-    if (!payload.exp || typeof payload.exp !== 'number') {
+    if (!payload.exp || typeof payload.exp !== 'number' || isNaN(payload.exp)) {
       return null;
     }
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -337,17 +345,34 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
     }
 
     // 3. Validate not before (nbf) if present
-    if (payload.nbf && typeof payload.nbf === 'number' && nowSeconds < payload.nbf) {
-      return null;
+    if (payload.nbf !== undefined) {
+      if (typeof payload.nbf !== 'number' || isNaN(payload.nbf) || nowSeconds < payload.nbf) {
+        return null;
+      }
     }
 
-    // 4. Validate subject claim (user identity) - strictly require genuine non-empty string sub
+    // 4. Validate issued-at (iat) if present (protect against clock skew > 5 minutes in future)
+    if (payload.iat !== undefined) {
+      if (typeof payload.iat !== 'number' || isNaN(payload.iat) || payload.iat > nowSeconds + 300) {
+        return null;
+      }
+    }
+
+    // 5. Validate subject claim (user identity) - strictly require genuine non-empty string sub
     const userId = payload.sub;
     if (!userId || typeof userId !== 'string' || userId.trim() === '') {
       return null;
     }
 
-    // 5. Validate audience (aud) claim
+    // 6. Explicit Role Validation:
+    // Normal user-facing protected endpoints accept ONLY expected authenticated-user role
+    // Strictly reject service_role, anon, missing, or arbitrary untrusted roles
+    const role = payload.role;
+    if (!role || typeof role !== 'string' || role.trim() !== 'authenticated') {
+      return null;
+    }
+
+    // 7. Validate audience (aud) claim
     const expectedAudience = getExpectedAudience();
     if (payload.aud !== undefined) {
       if (Array.isArray(payload.aud)) {
@@ -362,7 +387,7 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
       return null;
     }
 
-    // 6. Validate issuer (iss) claim
+    // 8. Validate issuer (iss) claim
     const expectedIssuer = getExpectedIssuer();
     if (process.env.NODE_ENV === 'production' && !expectedIssuer) {
       // Fail closed: In production, issuer must be resolvable to prevent cross-tenant token bypasses
@@ -448,9 +473,9 @@ export async function verifyJwtToken(token: string): Promise<AuthenticatedUser |
     }
 
     return {
-      id: userId,
-      email: payload.email,
-      role: payload.role || 'authenticated',
+      id: userId.trim(),
+      email: typeof payload.email === 'string' ? payload.email : undefined,
+      role: 'authenticated',
     };
   } catch {
     return null;

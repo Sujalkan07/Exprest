@@ -515,7 +515,28 @@ describe('PNR Status API & Validation Suite', () => {
       const adapter = new RailRadarAdapter();
       const originalFetch = globalThis.fetch;
       try {
-        globalThis.fetch = async () => ({ ok: false, status: 404 } as any);
+        globalThis.fetch = async (url: any) => {
+          const urlStr = String(url);
+          if (urlStr.includes('/fare')) {
+            return { ok: false, status: 404 } as any;
+          }
+          if (urlStr.includes('/trains/12951')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                data: {
+                  train: { source: { code: 'MMCT' }, destination: { code: 'NDLS' }, distance: 1384 },
+                  route: [
+                    { station: { code: 'MMCT' }, distance: 0 },
+                    { station: { code: 'NDLS' }, distance: 1384 },
+                  ],
+                },
+              }),
+            } as any;
+          }
+          return { ok: false, status: 404 } as any;
+        };
 
         const fare = await adapter.getTrainFare('12951', 'MMCT', 'NDLS', '2026-10-20', '3A');
         assert.equal(fare.trainNumber, '12951');

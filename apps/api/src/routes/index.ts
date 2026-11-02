@@ -453,18 +453,20 @@ export async function registerRoutes(fastify: FastifyInstance) {
         const expiryEpoch = Math.floor(Date.now() / 1000) + expiresInSeconds;
         expiresAt = new Date(expiryEpoch * 1000).toISOString();
         const dataToSign = `${journeyId}:exp:${expiryEpoch}`;
+        // Cryptographically hardened 128-bit (32 hex characters) HMAC-SHA256 signature
         const hmac = crypto
           .createHmac('sha256', secret)
           .update(dataToSign)
           .digest('hex')
-          .slice(0, 16);
+          .slice(0, 32);
         shareToken = `sh_${rawId}_exp${expiryEpoch}_${hmac}`;
       } else {
+        // Cryptographically hardened 128-bit (32 hex characters) HMAC-SHA256 signature
         const hmac = crypto
           .createHmac('sha256', secret)
           .update(journeyId)
           .digest('hex')
-          .slice(0, 16);
+          .slice(0, 32);
         shareToken = `sh_${rawId}_${hmac}`;
       }
 
@@ -487,29 +489,34 @@ export async function registerRoutes(fastify: FastifyInstance) {
   );
 
   // Share Resolution (Strictly requires valid cryptographic signed share token; direct journey IDs are rejected)
-  fastify.get('/api/v1/shares/:shareToken', async (req, reply) => {
-    try {
-      const { shareToken } = validateInput(shareParamSchema, req.params);
-      let journeyId: string | null = null;
+  fastify.get(
+    '/api/v1/shares/:shareToken',
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const { shareToken } = validateInput(shareParamSchema, req.params);
+        let journeyId: string | null = null;
 
-      // Strictly accept only signed share tokens starting with 'sh_'
-      if (shareToken.startsWith('sh_')) {
-        const rest = shareToken.slice(3);
-        const parts = rest.split('_');
+        // Strictly accept only signed share tokens starting with 'sh_'
+        if (shareToken.startsWith('sh_')) {
+          const rest = shareToken.slice(3);
+          const parts = rest.split('_');
 
-        if (parts.length >= 2) {
-          const sig = parts[parts.length - 1];
-          const middleParts = parts.slice(0, -1);
-          const secret = getShareSigningSecret();
+          if (parts.length >= 2) {
+            const sig = parts[parts.length - 1];
+            const middleParts = parts.slice(0, -1);
+            const secret = getShareSigningSecret();
 
-          // Check for expiring token pattern: _exp<timestamp>
-          const lastPart = middleParts[middleParts.length - 1];
-          const expMatch = lastPart?.match(/^exp(\d+)$/);
-
-          if (expMatch) {
-            const expiryEpoch = parseInt(expMatch[1], 10);
-            const nowEpoch = Math.floor(Date.now() / 1000);
-            if (nowEpoch > expiryEpoch) {
+            // Validate signature length: exactly 32 hex chars (modern 128-bit) or 16 hex chars (legacy migration)
+            const isValidSigLength = sig.length === 32 || sig.length === 16;
+            if (!isValidSigLength || !/^[0-9a-fA-F]+$/.test(sig)) {
               reply.status(404).send({
                 error: {
                   code: 'RUN_NOT_FOUND',
@@ -521,40 +528,62 @@ export async function registerRoutes(fastify: FastifyInstance) {
               return;
             }
 
-            const rawId = middleParts.slice(0, -1).join('_');
-            const reconstructedJourneyId = `journey_${rawId}`;
-            const dataToSign = `${reconstructedJourneyId}:exp:${expiryEpoch}`;
-            const expectedHmac = crypto
-              .createHmac('sha256', secret)
-              .update(dataToSign)
-              .digest('hex')
-              .slice(0, 16);
+            // Check for expiring token pattern: _exp<timestamp>
+            const lastPart = middleParts[middleParts.length - 1];
+            const expMatch = lastPart?.match(/^exp(\d+)$/);
 
-            const sigBuf = Buffer.from(sig, 'utf-8');
-            const expectedBuf = Buffer.from(expectedHmac, 'utf-8');
+            if (expMatch) {
+              const expiryEpoch = parseInt(expMatch[1], 10);
+              const nowEpoch = Math.floor(Date.now() / 1000);
+              if (nowEpoch > expiryEpoch) {
+                reply.status(404).send({
+                  error: {
+                    code: 'RUN_NOT_FOUND',
+                    message: 'Invalid, tampered, or expired share token.',
+                    retryable: false,
+                  },
+                  meta: makeMeta(req.id),
+                });
+                return;
+              }
 
-            if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
-              journeyId = reconstructedJourneyId;
-            }
-          } else {
-            // Persistent token
-            const rawId = middleParts.join('_');
-            const reconstructedJourneyId = `journey_${rawId}`;
-            const expectedHmac = crypto
-              .createHmac('sha256', secret)
-              .update(reconstructedJourneyId)
-              .digest('hex')
-              .slice(0, 16);
+              const rawId = middleParts.slice(0, -1).join('_');
+              const reconstructedJourneyId = `journey_${rawId}`;
+              const dataToSign = `${reconstructedJourneyId}:exp:${expiryEpoch}`;
 
-            const sigBuf = Buffer.from(sig, 'utf-8');
-            const expectedBuf = Buffer.from(expectedHmac, 'utf-8');
+              // Dual-verification supporting 32-hex standard and legacy 16-hex migration window
+              const fullExpectedHmac = crypto
+                .createHmac('sha256', secret)
+                .update(dataToSign)
+                .digest('hex');
+              const expectedHmac = sig.length === 32 ? fullExpectedHmac.slice(0, 32) : fullExpectedHmac.slice(0, 16);
 
-            if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
-              journeyId = reconstructedJourneyId;
+              const sigBuf = Buffer.from(sig, 'utf-8');
+              const expectedBuf = Buffer.from(expectedHmac, 'utf-8');
+
+              if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+                journeyId = reconstructedJourneyId;
+              }
+            } else {
+              // Persistent token
+              const rawId = middleParts.join('_');
+              const reconstructedJourneyId = `journey_${rawId}`;
+
+              const fullExpectedHmac = crypto
+                .createHmac('sha256', secret)
+                .update(reconstructedJourneyId)
+                .digest('hex');
+              const expectedHmac = sig.length === 32 ? fullExpectedHmac.slice(0, 32) : fullExpectedHmac.slice(0, 16);
+
+              const sigBuf = Buffer.from(sig, 'utf-8');
+              const expectedBuf = Buffer.from(expectedHmac, 'utf-8');
+
+              if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+                journeyId = reconstructedJourneyId;
+              }
             }
           }
         }
-      }
 
       if (!journeyId) {
         reply.status(404).send({

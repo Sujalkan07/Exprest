@@ -196,7 +196,7 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
     }
   });
 
-  it('10. Valid share link format matches sh_<train>_<date>_<hmac16>', async () => {
+  it('10. Valid share link format matches sh_<train>_<date>_<hmac32> (128-bit hardened HMAC)', async () => {
     const app = await buildApp();
     const token = createTestToken({ sub: 'user_123' });
     const res = await app.inject({
@@ -211,7 +211,7 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
 
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.payload);
-    assert.match(body.data.shareToken, /^sh_\d{4,5}_\d{4}-\d{2}-\d{2}_[a-f0-9]{16}$/);
+    assert.match(body.data.shareToken, /^sh_\d{4,5}_\d{4}-\d{2}-\d{2}_[a-f0-9]{32}$/);
     assert.ok(body.data.url.includes(encodeURIComponent(body.data.shareToken)));
     assert.equal(body.data.persistent, true);
     assert.equal(body.data.expiresAt, null);
@@ -271,7 +271,7 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
     }
   });
 
-  it('13. Creating a share link with expiresInSeconds produces an expiring token', async () => {
+  it('13. Creating a share link with expiresInSeconds produces an expiring token with 32-hex HMAC', async () => {
     const app = await buildApp();
     const token = createTestToken({ sub: 'user_123' });
     const res = await app.inject({
@@ -286,7 +286,7 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
 
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.payload);
-    assert.match(body.data.shareToken, /^sh_\d{4,5}_\d{4}-\d{2}-\d{2}_exp\d+_[a-f0-9]{16}$/);
+    assert.match(body.data.shareToken, /^sh_\d{4,5}_\d{4}-\d{2}-\d{2}_exp\d+_[a-f0-9]{32}$/);
     assert.equal(body.data.persistent, false);
     assert.ok(body.data.expiresAt, 'Should have expiresAt ISO timestamp');
     await app.close();
@@ -402,5 +402,57 @@ describe('Share Link Security & Cryptographic Validation Suite', () => {
     } finally {
       restoreEnv('AUTH_SECRET', originalSecret);
     }
+  });
+
+  it('18. Migration: Both modern 32-hex tokens and legacy 16-hex tokens resolve successfully', async () => {
+    const app = await buildApp();
+    const secret = getShareSigningSecret();
+    const rawId = journeyId.replace(/^journey_/, '');
+
+    // 1. Generate modern 32-hex token
+    const modernHmac = crypto.createHmac('sha256', secret).update(journeyId).digest('hex').slice(0, 32);
+    const modernToken = `sh_${rawId}_${modernHmac}`;
+
+    const modernRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/shares/${modernToken}`,
+    });
+    assert.equal(modernRes.statusCode, 200);
+    assert.equal(JSON.parse(modernRes.payload).data.journeyId, journeyId);
+
+    // 2. Generate legacy 16-hex token (backward-compatibility migration window)
+    const legacyHmac = crypto.createHmac('sha256', secret).update(journeyId).digest('hex').slice(0, 16);
+    const legacyToken = `sh_${rawId}_${legacyHmac}`;
+
+    const legacyRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/shares/${legacyToken}`,
+    });
+    assert.equal(legacyRes.statusCode, 200);
+    assert.equal(JSON.parse(legacyRes.payload).data.journeyId, journeyId);
+
+    await app.close();
+  });
+
+  it('19. Strictly rejects malformed signature lengths (e.g. 20, 24, 8 characters)', async () => {
+    const app = await buildApp();
+    const rawId = journeyId.replace(/^journey_/, '');
+
+    const badLengths = [
+      '12345678', // 8 chars
+      '12345678901234567890', // 20 chars
+      '123456789012345678901234', // 24 chars
+    ];
+
+    for (const badSig of badLengths) {
+      const badToken = `sh_${rawId}_${badSig}`;
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/shares/${badToken}`,
+      });
+      assert.equal(res.statusCode, 404, `Token with signature length ${badSig.length} must be rejected`);
+    }
+
+    await app.close();
   });
 });

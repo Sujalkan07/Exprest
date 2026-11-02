@@ -1,0 +1,24 @@
+# Gitleaks Configuration for Exprest
+title = "Exprest Secret Scanning Config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist test suites, mock credentials, and documentation"
+paths = [
+  '''apps/api/test/.*''',
+  '''docs/.*''',
+  '''scripts/security-smoke-test\.ts''',
+  '''\.env\.example''',
+  '''apps/api/\.env\.example''',
+  '''apps/web/\.env\.example''',
+]
+regexes = [
+  '''ee6ac6d7-bb37-4adb-833b-588711018d70''',
+  '''6dbf8698-bdff-4de3-ac82-b75bc50d312e''',
+  '''ci_test_auth_secret_minimum_16_characters''',
+  '''mock_ci_railradar_api_key_test''',
+  '''dev_secret_change_in_prod''',
+  '''placeholder-anon-key''',
+]

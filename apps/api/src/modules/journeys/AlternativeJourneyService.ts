@@ -11,44 +11,22 @@ import {
 import { RailRadarAdapter } from '../../providers/railradar/RailRadarAdapter.js';
 import { AppError } from '../../common/errors/AppError.js';
 import { isValidCalendarDate } from '../../common/validation/schemas.js';
+import {
+  isValidTimeString,
+  parseTimeToMinutes,
+  computeDurationMins,
+  formatMinutes,
+  addDaysToDate,
+  calculateArrivalDate,
+  evaluateConnectionFeasibility,
+} from '../../common/utils/railwayDateTime.js';
 
 function getTodayIst(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 }
 
-function parseTimeToMinutes(timeStr?: string | null): number {
-  if (!timeStr) return 0;
-  const parts = timeStr.trim().split(':');
-  const h = parseInt(parts[0], 10) || 0;
-  const m = parseInt(parts[1], 10) || 0;
-  return h * 60 + m;
-}
-
-function isValidTimeString(timeStr?: string | null): boolean {
-  if (!timeStr) return false;
-  return /^\d{1,2}:\d{2}$/.test(timeStr.trim());
-}
-
-function computeDurationMins(depStr: string, arrStr: string): number {
-  const depM = parseTimeToMinutes(depStr);
-  const arrM = parseTimeToMinutes(arrStr);
-  if (arrM >= depM) {
-    return arrM - depM;
-  }
-  return 1440 - depM + arrM;
-}
-
-function formatMinutes(mins: number | null | undefined): string {
-  if (mins == null || isNaN(mins) || mins <= 0) return 'Schedule Pending';
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m < 10 ? '0' : ''}${m}m`;
-}
-
 // Major hub candidate interchange junctions across India's principal railway corridors
-const COMMON_INTERCHANGE_JUNCTIONS = [
+export const COMMON_INTERCHANGE_JUNCTIONS = [
   { code: 'NGP', name: 'Nagpur Junction' },
   { code: 'BPL', name: 'Bhopal Junction' },
   { code: 'VGLJ', name: 'VGL Jhansi Junction' },
@@ -63,8 +41,99 @@ const COMMON_INTERCHANGE_JUNCTIONS = [
   { code: 'BZA', name: 'Vijayawada Junction' },
 ];
 
+/**
+ * Route-aware selection of candidate interchange junctions.
+ * Prioritizes logical transit hubs situated between the origin and destination corridors.
+ */
+export function selectCandidateJunctions(
+  from: string,
+  to: string
+): typeof COMMON_INTERCHANGE_JUNCTIONS {
+  const northStations = new Set(['NDLS', 'NZM', 'DLI', 'CNB', 'VGLJ', 'AGC', 'GWL', 'LKO', 'BSB']);
+  const southStations = new Set(['MAS', 'SBC', 'SMVB', 'SC', 'HYB', 'BZA', 'TPTY', 'CBE', 'ERS']);
+  const eastStations = new Set(['HWH', 'SDAH', 'PCOI', 'PRYJ', 'DDU', 'PNBE', 'GHY', 'TATA']);
+  const westStations = new Set(['BCT', 'MMCT', 'CSMT', 'BDTS', 'ST', 'BRC', 'ADI', 'RTM', 'KOTA', 'BSL', 'PUNE']);
+
+  const isFromNorth = northStations.has(from);
+  const isToNorth = northStations.has(to);
+  const isFromSouth = southStations.has(from);
+  const isToSouth = southStations.has(to);
+  const isFromEast = eastStations.has(from);
+  const isToEast = eastStations.has(to);
+  const isFromWest = westStations.has(from);
+  const isToWest = westStations.has(to);
+
+  const preferredCodes: string[] = [];
+
+  // North <-> South Corridor: Central transit hubs
+  if ((isFromNorth && isToSouth) || (isFromSouth && isToNorth)) {
+    preferredCodes.push('BPL', 'NGP', 'ET', 'VGLJ', 'BZA', 'SC');
+  }
+  // North <-> East Corridor
+  else if ((isFromNorth && isToEast) || (isFromEast && isToNorth)) {
+    preferredCodes.push('CNB', 'PCOI', 'NDLS', 'HWH');
+  }
+  // West <-> East Corridor
+  else if ((isFromWest && isToEast) || (isFromEast && isToWest)) {
+    preferredCodes.push('BSL', 'NGP', 'PCOI', 'CNB');
+  }
+  // West <-> North Corridor
+  else if ((isFromWest && isToNorth) || (isFromNorth && isToWest)) {
+    preferredCodes.push('BPL', 'VGLJ', 'ET');
+  }
+  // South <-> East Corridor
+  else if ((isFromSouth && isToEast) || (isFromEast && isToSouth)) {
+    preferredCodes.push('BZA', 'SC', 'HWH');
+  }
+
+  const result: typeof COMMON_INTERCHANGE_JUNCTIONS = [];
+  const seen = new Set<string>();
+
+  // Add corridor-preferred junctions first
+  for (const code of preferredCodes) {
+    if (code === from || code === to || seen.has(code)) continue;
+    const junc = COMMON_INTERCHANGE_JUNCTIONS.find((j) => j.code === code);
+    if (junc) {
+      result.push(junc);
+      seen.add(code);
+    }
+  }
+
+  // Backfill with other major interchange hubs
+  for (const junc of COMMON_INTERCHANGE_JUNCTIONS) {
+    if (junc.code === from || junc.code === to || seen.has(junc.code)) continue;
+    result.push(junc);
+    seen.add(junc.code);
+  }
+
+  // Limit to top 5 most relevant junctions to prevent uncontrolled outbound fanout
+  return result.slice(0, 5);
+}
+
 export class AlternativeJourneyService {
   private railRadar = new RailRadarAdapter();
+  // Short-lived in-memory cache for timetable lookups to minimize provider latency
+  private timetableCache = new Map<string, { expiresAt: number; data: any }>();
+
+  private async getTrainsBetweenCached(
+    from: string,
+    to: string,
+    options?: { byCity?: boolean; date?: string }
+  ): Promise<any> {
+    const key = `${from}:${to}:${options?.byCity ? 'city' : 'station'}:${options?.date || 'nodate'}`;
+    const now = Date.now();
+    const cached = this.timetableCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return cached.data;
+    }
+
+    const data = await this.railRadar.getTrainsBetween(from, to, options).catch(() => null);
+    if (data) {
+      // 5-minute cache for static timetable queries
+      this.timetableCache.set(key, { expiresAt: now + 5 * 60 * 1000, data });
+    }
+    return data;
+  }
 
   async findAlternatives(
     fromStation: string,
@@ -114,8 +183,7 @@ export class AlternativeJourneyService {
         lng: null,
       };
 
-    // 2. Fetch direct trains between stations
-    // Note: Never fallback to date-less query that attaches user's date to trains that don't run on that date
+    // 2. Fetch direct trains between stations for the requested service date
     const directBetweenData = await this.railRadar
       .getTrainsBetween(from, to, { byCity: true, date })
       .catch(() => null);
@@ -135,9 +203,12 @@ export class AlternativeJourneyService {
       const arrTime = item.to?.arrival || item.to?.scheduledArrival || '';
       const durationMins = typeof item.duration === 'number' && item.duration > 0
         ? item.duration
-        : (isValidTimeString(depTime) && isValidTimeString(arrTime) ? computeDurationMins(depTime, arrTime) : 0);
+        : (isValidTimeString(depTime) && isValidTimeString(arrTime) ? (computeDurationMins(depTime, arrTime) || 0) : 0);
       const distance = typeof item.distance === 'number' && item.distance > 0 ? item.distance : null;
       const haltsBetween = typeof item.totalHaltsBetween === 'number' ? item.totalHaltsBetween : undefined;
+
+      // Calculate arrival calendar date accounting for overnight day rollovers
+      const directArrDate = calculateArrivalDate(date, depTime, arrTime, durationMins, item.to?.arrivalDate);
 
       // Calculate fare for direct journey
       let directFare: number | null = null;
@@ -189,7 +260,7 @@ export class AlternativeJourneyService {
         departureTime: depTime || '--:--',
         arrivalTime: arrTime || '--:--',
         departureDate: date,
-        arrivalDate: date,
+        arrivalDate: directArrDate,
         durationMinutes: durationMins,
         durationFormatted: formatMinutes(durationMins),
         distanceKm: distance,
@@ -217,8 +288,6 @@ export class AlternativeJourneyService {
     }
 
     // 4. Category 1: Same Train Alternative Segment
-    // If preferredTrainNumber is provided, inspect that specific train.
-    // If not provided, inspect candidate direct trains (up to 3) to see if any have prior origins on their route.
     const sameTrainAlternatives: SameTrainAlternative[] = [];
     const candidateTrainNums: string[] = [];
 
@@ -247,27 +316,36 @@ export class AlternativeJourneyService {
             (s) => (s.station?.code || s.stationCode) === to
           );
 
+          // Verification rule: Strict stop ordering: 0 <= priorOrigin < fromIdx < toIdx < length
           if (fromIdx > 0 && toIdx > fromIdx) {
-            // Station starts earlier than intended boarding!
             const priorOriginStop = routeStops[0];
             const boardingStop = routeStops[fromIdx];
             const destStop = routeStops[toIdx];
 
-            const priorOriginCode = priorOriginStop.station?.code || priorOriginStop.stationCode;
+            const priorOriginCode = (priorOriginStop.station?.code || priorOriginStop.stationCode || '').trim().toUpperCase();
             const priorOriginName = priorOriginStop.station?.name || priorOriginStop.stationName || priorOriginCode;
 
-            const distPriorToDest =
-              typeof destStop.distance === 'number' && typeof priorOriginStop.distance === 'number'
-                ? destStop.distance - priorOriginStop.distance
-                : null;
-            const distBoardingToDest =
-              typeof destStop.distance === 'number' && typeof boardingStop.distance === 'number'
-                ? destStop.distance - boardingStop.distance
-                : null;
-            const additionalDist =
-              distPriorToDest != null && distBoardingToDest != null && distPriorToDest > distBoardingToDest
-                ? distPriorToDest - distBoardingToDest
-                : null;
+            // Safeguard: Ensure prior origin is distinct from both boarding and destination
+            if (!priorOriginCode || priorOriginCode === from || priorOriginCode === to) {
+              continue;
+            }
+
+            // Distance integrity: Ensure stop cumulative distances are strictly monotonic
+            const priorDist = typeof priorOriginStop.distance === 'number' ? priorOriginStop.distance : 0;
+            const boardingDist = typeof boardingStop.distance === 'number' ? boardingStop.distance : null;
+            const destDist = typeof destStop.distance === 'number' ? destStop.distance : null;
+
+            let distPriorToDest: number | null = null;
+            let distBoardingToDest: number | null = null;
+            let additionalDist: number | null = null;
+
+            if (destDist != null && boardingDist != null && destDist > boardingDist && boardingDist >= priorDist) {
+              distPriorToDest = destDist - priorDist;
+              distBoardingToDest = destDist - boardingDist;
+              if (distPriorToDest > distBoardingToDest) {
+                additionalDist = distPriorToDest - distBoardingToDest;
+              }
+            }
 
             const depTimePrior = priorOriginStop.departure || priorOriginStop.arrival || '--:--';
             const depTimeBoarding = boardingStop.departure || boardingStop.arrival || '--:--';
@@ -285,7 +363,7 @@ export class AlternativeJourneyService {
             }
 
             if (isValidTimeString(depTimeBoarding) && isValidTimeString(arrTimeDest)) {
-              intendedDurationMins = computeDurationMins(depTimeBoarding, arrTimeDest);
+              intendedDurationMins = computeDurationMins(depTimeBoarding, arrTimeDest) || 0;
             } else if (paperDurationMins != null && distPriorToDest && distBoardingToDest) {
               intendedDurationMins = Math.round((paperDurationMins * distBoardingToDest) / distPriorToDest);
             }
@@ -293,6 +371,15 @@ export class AlternativeJourneyService {
             if (paperDurationMins != null && intendedDurationMins > 0 && paperDurationMins > intendedDurationMins) {
               additionalTimeMins = paperDurationMins - intendedDurationMins;
             }
+
+            // Calculate destination arrival date
+            const destArrDate = calculateArrivalDate(
+              date,
+              depTimeBoarding,
+              arrTimeDest,
+              intendedDurationMins,
+              destStop.arrivalDate
+            );
 
             // Fetch actual fares for extended segment vs intended segment
             const [fareExtended, fareIntended] = await Promise.all([
@@ -317,7 +404,7 @@ export class AlternativeJourneyService {
               ? 'QUOTED'
               : (extendedFareVal != null ? 'ESTIMATED' : 'UNAVAILABLE');
 
-            // Seat availability
+            // Seat availability for earlier originating segment
             let stAvailCategory: AvailabilityCategory = 'NOT_CHECKED';
             let stAvailStatus = 'Candidate General Quota (Check IRCTC)';
             let stIsAvail = false;
@@ -347,8 +434,8 @@ export class AlternativeJourneyService {
 
             const isSpecificTrain = Boolean(preferredTrainNumber);
             const advisoryText = isSpecificTrain
-              ? `Direct segment from your intended boarding station (${from} to ${to}) on Train ${candidateTrainNum} may face seat contention or waitlists. However, this train originates earlier at ${priorOriginName} (${priorOriginCode}), where candidate General Quota allocations may be available under Railway Commercial Rule 142.`
-              : `This train originates earlier at ${priorOriginName} (${priorOriginCode}). Booking from the originating station may provide General Quota allocations under Railway Commercial Rule 142, with legal boarding at your intended station (${from}).`;
+              ? `Direct segment from your intended boarding station (${from} to ${to}) on Train ${candidateTrainNum} may face seat contention. This train originates earlier at ${priorOriginName} (${priorOriginCode}), where candidate General Quota allocations may be available under Railway Commercial Rule 142.`
+              : `This train originates earlier at ${priorOriginName} (${priorOriginCode}). Booking from the originating station may provide General Quota allocations under Railway Commercial Rule 142, with authorized boarding at your intended station (${from}).`;
 
             sameTrainAlternatives.push({
               id: `st-${candidateTrainNum}`,
@@ -375,7 +462,7 @@ export class AlternativeJourneyService {
               arrivalTimeDestination: arrTimeDest,
               intendedDate: date,
               ticketedStartDate: date,
-              destinationArrivalDate: date,
+              destinationArrivalDate: destArrDate,
               additionalDistanceKm: additionalDist,
               additionalTimeMinutes: additionalTimeMins,
               totalJourneyMinutes: intendedDurationMins,
@@ -405,155 +492,161 @@ export class AlternativeJourneyService {
       }
     }
 
-    // 5. Category 3: Connecting Journeys
-    // Discover feasible 1-transfer connections via major transit junctions
+    // 5. Category 3: Connecting Journeys (Route-Aware Junction Discovery)
     const connectingAlternatives: ConnectingAlternative[] = [];
-    const candidateJunctions = COMMON_INTERCHANGE_JUNCTIONS.filter(
-      (j) => j.code !== from && j.code !== to
-    ).slice(0, 4);
+    const candidateJunctions = selectCandidateJunctions(from, to);
 
-    const junctionPromises = candidateJunctions.map(async (junc) => {
-      try {
-        const [leg1Res, leg2Res] = await Promise.all([
-          this.railRadar.getTrainsBetween(from, junc.code, { byCity: false, date }).catch(() => null),
-          this.railRadar.getTrainsBetween(junc.code, to, { byCity: false }).catch(() => null),
-        ]);
+    // Limit concurrency to avoid provider request storms
+    const junctionResults = await Promise.all(
+      candidateJunctions.map(async (junc) => {
+        try {
+          // Leg 1 departs on requested date
+          const leg1Res = await this.getTrainsBetweenCached(from, junc.code, { byCity: false, date });
+          const leg1Trains: any[] = leg1Res?.trains || [];
+          if (leg1Trains.length === 0) return null;
 
-        const leg1Trains: any[] = leg1Res?.trains || [];
-        const leg2Trains: any[] = leg2Res?.trains || [];
+          const feasibleConnections: ConnectingAlternative[] = [];
 
-        if (leg1Trains.length === 0 || leg2Trains.length === 0) return null;
+          for (const t1 of leg1Trains.slice(0, 5)) {
+            const t1Dep = t1.from?.departure || t1.from?.scheduledDeparture;
+            const t1Arr = t1.to?.arrival || t1.to?.scheduledArrival;
 
-        for (const t1 of leg1Trains.slice(0, 5)) {
-          const t1Dep = t1.from?.departure || t1.from?.scheduledDeparture;
-          const t1Arr = t1.to?.arrival || t1.to?.scheduledArrival;
+            if (!isValidTimeString(t1Dep) || !isValidTimeString(t1Arr)) continue;
 
-          if (!isValidTimeString(t1Dep) || !isValidTimeString(t1Arr)) {
-            continue;
+            const t1Dur = Number(t1.duration) || computeDurationMins(t1Dep, t1Arr) || 0;
+            const leg1ArrDate = calculateArrivalDate(date, t1Dep, t1Arr, t1Dur, t1.to?.arrivalDate);
+
+            // Passenger arrives at junction on leg1ArrDate at t1Arr
+            // We evaluate leg 2 schedules for leg1ArrDate and the following morning
+            const candidateLeg2Dates = [leg1ArrDate, addDaysToDate(leg1ArrDate, 1)];
+
+            for (const leg2Date of candidateLeg2Dates) {
+              const leg2Res = await this.getTrainsBetweenCached(junc.code, to, { byCity: false, date: leg2Date });
+              const leg2Trains: any[] = leg2Res?.trains || [];
+              if (leg2Trains.length === 0) continue;
+
+              for (const t2 of leg2Trains.slice(0, 5)) {
+                const t2Dep = t2.from?.departure || t2.from?.scheduledDeparture;
+                const t2Arr = t2.to?.arrival || t2.to?.scheduledArrival;
+
+                if (!isValidTimeString(t2Dep) || !isValidTimeString(t2Arr)) continue;
+
+                // Evaluate connection feasibility (45 min min layover, 480 min max layover)
+                const feasibility = evaluateConnectionFeasibility(leg1ArrDate, t1Arr, t2Dep, 45, 480);
+                if (!feasibility || !feasibility.isFeasible || feasibility.leg2DepDate !== leg2Date) {
+                  continue;
+                }
+
+                const t2Dur = Number(t2.duration) || computeDurationMins(t2Dep, t2Arr) || 0;
+                const leg2ArrDate = calculateArrivalDate(leg2Date, t2Dep, t2Arr, t2Dur, t2.to?.arrivalDate);
+                const totalDurationMins = t1Dur + feasibility.layoverMinutes + t2Dur;
+
+                // Compute leg fares
+                const [fare1, fare2] = await Promise.all([
+                  this.railRadar
+                    .getTrainFare(String(t1.train?.number || t1.number), from, junc.code, date, classCode, quota)
+                    .catch(() => null),
+                  this.railRadar
+                    .getTrainFare(String(t2.train?.number || t2.number), junc.code, to, leg2Date, classCode, quota)
+                    .catch(() => null),
+                ]);
+
+                const f1Val = fare1?.breakdown?.totalFare != null ? Number(fare1.breakdown.totalFare) : null;
+                const f2Val = fare2?.breakdown?.totalFare != null ? Number(fare2.breakdown.totalFare) : null;
+                const combinedFare = f1Val != null && f2Val != null ? f1Val + f2Val : null;
+                const conFareType: FareType = (fare1?.source === 'prs' && fare2?.source === 'prs')
+                  ? 'QUOTED'
+                  : (combinedFare != null ? 'ESTIMATED' : 'UNAVAILABLE');
+
+                const leg1Obj: ConnectingLeg = {
+                  trainNumber: String(t1.train?.number || t1.number),
+                  trainName: t1.train?.name || t1.name || `Train ${t1.number}`,
+                  trainType: t1.train?.type || t1.type || 'Express',
+                  from: { code: from, name: originStation.name },
+                  to: { code: junc.code, name: junc.name },
+                  departureTime: t1Dep,
+                  arrivalTime: t1Arr,
+                  departureDate: date,
+                  arrivalDate: leg1ArrDate,
+                  durationMinutes: t1Dur,
+                  durationFormatted: formatMinutes(t1Dur),
+                  distanceKm: Number(t1.distance) || null,
+                  fare: f1Val,
+                  fareType: fare1?.source === 'prs' ? 'QUOTED' : (f1Val != null ? 'ESTIMATED' : 'UNAVAILABLE'),
+                  travelClass: classCode,
+                  availabilityStatus: 'Separate Booking Required',
+                  availabilityCategory: 'NOT_CHECKED',
+                };
+
+                const leg2Obj: ConnectingLeg = {
+                  trainNumber: String(t2.train?.number || t2.number),
+                  trainName: t2.train?.name || t2.name || `Train ${t2.number}`,
+                  trainType: t2.train?.type || t2.type || 'Express',
+                  from: { code: junc.code, name: junc.name },
+                  to: { code: to, name: destinationStation.name },
+                  departureTime: t2Dep,
+                  arrivalTime: t2Arr,
+                  departureDate: leg2Date,
+                  arrivalDate: leg2ArrDate,
+                  durationMinutes: t2Dur,
+                  durationFormatted: formatMinutes(t2Dur),
+                  distanceKm: Number(t2.distance) || null,
+                  fare: f2Val,
+                  fareType: fare2?.source === 'prs' ? 'QUOTED' : (f2Val != null ? 'ESTIMATED' : 'UNAVAILABLE'),
+                  travelClass: classCode,
+                  availabilityStatus: 'Separate Booking Required',
+                  availabilityCategory: 'NOT_CHECKED',
+                };
+
+                const connection: ConnectingAlternative = {
+                  id: `con-${junc.code}-${leg1Obj.trainNumber}-${leg2Obj.trainNumber}`,
+                  category: 'CONNECTING',
+                  name: `${leg1Obj.trainName.split(' ')[0]} + ${leg2Obj.trainName.split(' ')[0]} (via ${junc.code})`,
+                  origin: originStation,
+                  destination: destinationStation,
+                  interchangeStation: {
+                    code: junc.code,
+                    name: junc.name,
+                    city: null,
+                    state: null,
+                    lat: null,
+                    lng: null,
+                  },
+                  transferLayoverMinutes: feasibility.layoverMinutes,
+                  transferLayoverFormatted: formatMinutes(feasibility.layoverMinutes),
+                  leg1: leg1Obj,
+                  leg2: leg2Obj,
+                  totalDurationMinutes: totalDurationMins,
+                  totalDurationFormatted: formatMinutes(totalDurationMins),
+                  totalFare: combinedFare,
+                  fareType: conFareType,
+                  transfersCount: 1,
+                  layoverLocationNote: `Transit transfer at ${junc.name} (${junc.code})`,
+                  availabilityStatus: 'Check Individual PRS on IRCTC',
+                  availabilityCategory: 'NOT_CHECKED',
+                  advisoryText: `Feasible transfer at ${junc.name} with ${formatMinutes(feasibility.layoverMinutes)} layover. Leg 1 arrives on ${leg1ArrDate} and Leg 2 boards on ${leg2Date}. Notice: Connecting journeys consist of separately booked PNR tickets on IRCTC.`,
+                  freshness: 'RailRadar Timetable & Station Topology Sync',
+                };
+
+                feasibleConnections.push(connection);
+                if (feasibleConnections.length >= 2) break;
+              }
+              if (feasibleConnections.length >= 2) break;
+            }
+            if (feasibleConnections.length >= 2) break;
           }
 
-          const t1ArrMins = parseTimeToMinutes(t1Arr);
-          const t1Dur = Number(t1.duration) || computeDurationMins(t1Dep, t1Arr);
-
-          for (const t2 of leg2Trains.slice(0, 5)) {
-            const t2Dep = t2.from?.departure || t2.from?.scheduledDeparture;
-            const t2Arr = t2.to?.arrival || t2.to?.scheduledArrival;
-
-            if (!isValidTimeString(t2Dep) || !isValidTimeString(t2Arr)) {
-              continue;
-            }
-
-            const t2DepMins = parseTimeToMinutes(t2Dep);
-            const t2Dur = Number(t2.duration) || computeDurationMins(t2Dep, t2Arr);
-
-            // Compute layover minutes
-            let layoverMins = t2DepMins - t1ArrMins;
-            if (layoverMins < 0) {
-              // Day rollover: train departs next calendar morning
-              layoverMins += 1440;
-            }
-
-            // Feasible connection buffer constraint: 45 min min, 8 hours (480m) max
-            if (layoverMins >= 45 && layoverMins <= 480) {
-              const totalDurationMins = t1Dur + layoverMins + t2Dur;
-
-              // Compute leg fares
-              const [fare1, fare2] = await Promise.all([
-                this.railRadar
-                  .getTrainFare(String(t1.train?.number || t1.number), from, junc.code, date, classCode, quota)
-                  .catch(() => null),
-                this.railRadar
-                  .getTrainFare(String(t2.train?.number || t2.number), junc.code, to, date, classCode, quota)
-                  .catch(() => null),
-              ]);
-
-              const f1Val = fare1?.breakdown?.totalFare != null ? Number(fare1.breakdown.totalFare) : null;
-              const f2Val = fare2?.breakdown?.totalFare != null ? Number(fare2.breakdown.totalFare) : null;
-              const combinedFare = f1Val != null && f2Val != null ? f1Val + f2Val : null;
-              const conFareType: FareType = (fare1?.source === 'prs' && fare2?.source === 'prs')
-                ? 'QUOTED'
-                : (combinedFare != null ? 'ESTIMATED' : 'UNAVAILABLE');
-
-              const leg1Obj: ConnectingLeg = {
-                trainNumber: String(t1.train?.number || t1.number),
-                trainName: t1.train?.name || t1.name || `Train ${t1.number}`,
-                trainType: t1.train?.type || t1.type || 'Express',
-                from: { code: from, name: originStation.name },
-                to: { code: junc.code, name: junc.name },
-                departureTime: t1Dep,
-                arrivalTime: t1Arr,
-                departureDate: date,
-                arrivalDate: date,
-                durationMinutes: t1Dur,
-                durationFormatted: formatMinutes(t1Dur),
-                distanceKm: Number(t1.distance) || null,
-                fare: f1Val,
-                fareType: fare1?.source === 'prs' ? 'QUOTED' : (f1Val != null ? 'ESTIMATED' : 'UNAVAILABLE'),
-                travelClass: classCode,
-                availabilityStatus: 'Separate Booking Required',
-                availabilityCategory: 'NOT_CHECKED',
-              };
-
-              const leg2Obj: ConnectingLeg = {
-                trainNumber: String(t2.train?.number || t2.number),
-                trainName: t2.train?.name || t2.name || `Train ${t2.number}`,
-                trainType: t2.train?.type || t2.type || 'Express',
-                from: { code: junc.code, name: junc.name },
-                to: { code: to, name: destinationStation.name },
-                departureTime: t2Dep,
-                arrivalTime: t2Arr,
-                departureDate: date,
-                arrivalDate: date,
-                durationMinutes: t2Dur,
-                durationFormatted: formatMinutes(t2Dur),
-                distanceKm: Number(t2.distance) || null,
-                fare: f2Val,
-                fareType: fare2?.source === 'prs' ? 'QUOTED' : (f2Val != null ? 'ESTIMATED' : 'UNAVAILABLE'),
-                travelClass: classCode,
-                availabilityStatus: 'Separate Booking Required',
-                availabilityCategory: 'NOT_CHECKED',
-              };
-
-              const connection: ConnectingAlternative = {
-                id: `con-${junc.code}-${leg1Obj.trainNumber}-${leg2Obj.trainNumber}`,
-                category: 'CONNECTING',
-                name: `${leg1Obj.trainName.split(' ')[0]} + ${leg2Obj.trainName.split(' ')[0]} (via ${junc.code})`,
-                origin: originStation,
-                destination: destinationStation,
-                interchangeStation: {
-                  code: junc.code,
-                  name: junc.name,
-                },
-                transferLayoverMinutes: layoverMins,
-                transferLayoverFormatted: `${Math.floor(layoverMins / 60)}h ${layoverMins % 60}m buffer`,
-                leg1: leg1Obj,
-                leg2: leg2Obj,
-                totalDurationMinutes: totalDurationMins,
-                totalDurationFormatted: formatMinutes(totalDurationMins),
-                totalFare: combinedFare,
-                fareType: conFareType,
-                transfersCount: 1,
-                layoverLocationNote: `Interchange at ${junc.name} (${junc.code})`,
-                availabilityStatus: 'Separate Booking Required',
-                availabilityCategory: 'NOT_CHECKED',
-                advisoryText:
-                  'Notice: Connecting journeys consist of separately booked PNR tickets. Indian Railways does not guarantee connection protection if the first train is delayed.',
-                freshness: 'RailRadar Timetable Feed',
-              };
-
-              return connection;
-            }
-          }
+          return feasibleConnections;
+        } catch {
+          return null;
         }
-        return null;
-      } catch {
-        return null;
-      }
-    });
+      })
+    );
 
-    const connectionsResolved = await Promise.all(junctionPromises);
-    for (const c of connectionsResolved) {
-      if (c) connectingAlternatives.push(c);
+    for (const list of junctionResults) {
+      if (Array.isArray(list)) {
+        connectingAlternatives.push(...list);
+      }
     }
 
     const totalCandidatePaths =
@@ -577,7 +670,7 @@ export class AlternativeJourneyService {
       connectingAlternatives,
       totalCandidatePaths,
       telemetryFreshness: {
-        source: 'RailRadar Timetable Feed',
+        source: 'RailRadar Timetable & Station Topology Feed',
         fetchedAt: new Date().toISOString(),
         isLive: false,
       },
